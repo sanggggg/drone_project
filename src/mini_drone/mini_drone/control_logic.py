@@ -1,25 +1,39 @@
 #!/usr/bin/env python3
 import math
-import threading
 import time
+import threading
 from typing import Optional, Dict
 
-from geometry_msgs.msg import TwistStamped, PoseStamped
-from nav_msgs.msg import Odometry
-from std_msgs.msg import Float32, Float32MultiArray, Bool
-from std_srvs.srv import Trigger
-from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 import rclpy
-
+from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 from rcl_interfaces.msg import SetParametersResult
+
+from std_msgs.msg import Float32, Float32MultiArray, Bool
+from geometry_msgs.msg import TwistStamped, PoseStamped
+from std_srvs.srv import Trigger
+
+
+def _qos_ctrl() -> QoSProfile:
+    q = QoSProfile(depth=10)
+    q.reliability = ReliabilityPolicy.RELIABLE   # 제어/HL은 반드시 RELIABLE
+    q.history = HistoryPolicy.KEEP_LAST
+    return q
+
+
+def _qos_sense() -> QoSProfile:
+    q = QoSProfile(depth=10)
+    q.reliability = ReliabilityPolicy.BEST_EFFORT  # 상태 브로드캐스트/센싱은 BEST_EFFORT 허용
+    q.history = HistoryPolicy.KEEP_LAST
+    return q
+
 
 class ControlManager:
     """
-    Crazyflie 제어 관리자.
-      - dry_run=True 이면 실제 Crazyflie로 어떤 패킷도 보내지 않고, 로그만 출력
-      - E-STOP 래치 지원: /cf/stop 으로 잠그면 /cf/estop_reset 전까지 모든 비행 명령 차단
-      - 상태 방송: /cf/estop (std_msgs/Bool)
-      - hover/HL 명령 구독 및 패턴(원형/스핀/사각) 실행
+    Crazyflie 제어 브리지.
+
+    - hover latch 옵션:
+      * hover_hold_forever: True면 hover_timeout_s를 넘겨도 마지막 세트포인트를 계속 재전송
+      * hover_max_hold_s: 0보다 크면 그 시간 이상은 안전을 위해 notify_stop 전송
     """
 
     def __init__(self, node,
@@ -28,22 +42,37 @@ class ControlManager:
                  hl_durations: Dict[str, float] = None):
         self.node = node
 
-        # ---- Parameters ----
-        # 드라이런(기본 True: 실제 전송 금지)
-        self.node.declare_parameter('dry_run', True)
-        # self.dry_run = bool(self.node.get_parameter('dry_run').get_parameter_value().bool_value or True)
-        self.dry_run = bool(self.node.get_parameter('dry_run').get_parameter_value().bool_value)
+        # ---------- 파라미터 get/declare 헬퍼 (이미 선언돼 있으면 재선언하지 않음) ----------
+        def get_or_declare(name: str, default):
+            if hasattr(self.node, "has_parameter") and self.node.has_parameter(name):
+                return self._param_value(self.node.get_parameter(name))
+            # 이미 선언돼 있지 않으면 선언
+            p = self.node.declare_parameter(name, default)
+            return self._param_value(p)
 
+        # ---------- Parameters ----------
+        self.dry_run = bool(get_or_declare('dry_run', False))
+        # 타 모듈이 미리 선언했을 가능성이 높은 항목들: get_or_declare 로 안전하게 처리
+        self.hover_timeout_s = float(get_or_declare('hover_timeout_s', float(hover_timeout_s)))
+        self.hover_hold_forever = bool(get_or_declare('hover_hold_forever', True))
+        self.hover_max_hold_s = float(get_or_declare('hover_max_hold_s', 0.0))  # 0=무제한
+
+        # 패턴 관련(중복 선언 방지)
+        self.spin_duration_s = float(get_or_declare('spin_duration_s', 3.0))
+        self.square_turn_rate_deg_s = float(get_or_declare('square_turn_rate_deg_s', 90.0))
+
+        # 파라미터 변경 콜백
         self.node.add_on_set_parameters_callback(self._on_set_params)
+
         self.node.get_logger().info(f'dry_run initial={self.dry_run}')
 
+        # 내부 상태
         self.cf = None
         self._lock = threading.Lock()
         self._last_hover: Optional[TwistStamped] = None
         self._last_hover_time = 0.0
 
-        self.cmd_rate_hz = cmd_rate_hz
-        self.hover_timeout_s = hover_timeout_s
+        self.cmd_rate_hz = float(cmd_rate_hz)
         self.hl_durations = hl_durations or {
             'takeoff': 2.0,
             'land': 2.0,
@@ -53,36 +82,24 @@ class ControlManager:
         # ---- E-STOP latch state ----
         self.estop_latched = False
 
-        # ---- QoS ----
-        qos = QoSProfile(depth=10)
-        qos.reliability = ReliabilityPolicy.BEST_EFFORT
-        qos.history = HistoryPolicy.KEEP_LAST
-
         # ---- Publishers ----
-        self.pub_estop = self.node.create_publisher(Bool, '/cf/estop', qos)
+        self.pub_estop = self.node.create_publisher(Bool, '/cf/estop', _qos_sense())
 
-        # ---- Subscriptions (저수준 hover) ----
-        self.node.create_subscription(TwistStamped, '/cf/cmd_hover', self._on_cmd_hover, qos)
-
-        # ---- Subscriptions (High-level) ----
-        self.node.create_subscription(Float32, '/cf/hl/takeoff', self._on_hl_takeoff, qos)
-        self.node.create_subscription(Float32, '/cf/hl/land', self._on_hl_land, qos)
-        self.node.create_subscription(PoseStamped, '/cf/hl/goto', self._on_hl_goto, qos)
+        # ---- Subscriptions (저수준 hover & HL) ----
+        self.node.create_subscription(TwistStamped, '/cf/cmd_hover', self._on_cmd_hover, _qos_ctrl())
+        self.node.create_subscription(Float32, '/cf/hl/takeoff', self._on_hl_takeoff, _qos_ctrl())
+        self.node.create_subscription(Float32, '/cf/hl/land',    self._on_hl_land,    _qos_ctrl())
+        self.node.create_subscription(PoseStamped, '/cf/hl/goto', self._on_hl_goto,   _qos_ctrl())
 
         # ---- Pattern commands ----
-        # circle: Float32MultiArray [radius_m, speed_mps, z_m, duration_s]
-        self.node.create_subscription(Float32MultiArray, '/cf/pattern/circle', self._on_pattern_circle, qos)
-        # spin in place: Float32 yaw_rate_rad_s, duration 파라미터 사용
-        self.node.declare_parameter('spin_duration_s', 3.0)
-        self.node.create_subscription(Float32, '/cf/pattern/spin', self._on_pattern_spin, qos)
-        # square: Float32MultiArray [side_m, speed_mps, z_m]
-        self.node.declare_parameter('square_turn_rate_deg_s', 90.0)  # 회전 속도(도/초)
-        self.node.create_subscription(Float32MultiArray, '/cf/pattern/square', self._on_pattern_square, qos)
+        self.node.create_subscription(Float32MultiArray, '/cf/pattern/circle', self._on_pattern_circle, _qos_ctrl())
+        self.node.create_subscription(Float32, '/cf/pattern/spin', self._on_pattern_spin, _qos_ctrl())
+        self.node.create_subscription(Float32MultiArray, '/cf/pattern/square', self._on_pattern_square, _qos_ctrl())
 
         # ---- Services ----
-        self.node.create_service(Trigger, '/cf/stop', self._srv_stop_cb)             # 래치 + 즉시 STOP
-        self.node.create_service(Trigger, '/cf/estop_reset', self._srv_estop_reset)  # 래치 해제
-        self.node.create_service(Trigger, '/cf/notify_stop', self._srv_notify_cb)
+        self.node.create_service(Trigger, '/cf/stop',         self._srv_stop_cb)
+        self.node.create_service(Trigger, '/cf/estop_reset',  self._srv_estop_reset)
+        self.node.create_service(Trigger, '/cf/notify_stop',  self._srv_notify_cb)
         self.node.create_service(Trigger, '/cf/pattern/stop', self._srv_pattern_stop)
 
         # ---- Timers ----
@@ -95,9 +112,24 @@ class ControlManager:
         if self.dry_run:
             self.node.get_logger().info('[DRY-RUN] 실제 전송 없이 로그만 출력합니다. (-p dry_run:=false 로 전송 허용 가능)')
 
+    # ---------- utils ----------
+    @staticmethod
+    def _param_value(param_or_declared):
+        # rclpy.Parameter 또는 ParameterValue 래핑 모두 안전하게 값만 뽑아내기
+        if hasattr(param_or_declared, "value"):
+            return param_or_declared.value
+        if hasattr(param_or_declared, "get_parameter_value"):
+            v = param_or_declared.get_parameter_value()
+            # bool_value / double_value / integer_value / string_value 중 채워진 걸 사용
+            for attr in ("bool_value", "double_value", "integer_value", "string_value"):
+                if hasattr(v, attr):
+                    vv = getattr(v, attr)
+                    # rclpy는 미설정이면 0/False/''가 올 수 있으므로 그냥 반환
+                    return vv
+        return param_or_declared
+
     # ========== Public API ==========
     def attach_cf(self, cf):
-        """Bridge에서 연결 직후 호출"""
         with self._lock:
             self.cf = cf
         self.node.get_logger().info('ControlManager attached to CF')
@@ -113,18 +145,34 @@ class ControlManager:
         self._pat_th = None
         self._pat_stop.clear()
 
+    # ========== Param updates ==========
     def _on_set_params(self, params):
         for p in params:
             if p.name == 'dry_run':
                 self.dry_run = bool(p.value)
                 self.node.get_logger().warn(f'[PARAM] dry_run -> {self.dry_run}')
+            elif p.name == 'hover_timeout_s':
+                self.hover_timeout_s = float(p.value)
+                self.node.get_logger().warn(f'[PARAM] hover_timeout_s -> {self.hover_timeout_s:.3f}s')
+            elif p.name == 'hover_hold_forever':
+                self.hover_hold_forever = bool(p.value)
+                self.node.get_logger().warn(f'[PARAM] hover_hold_forever -> {self.hover_hold_forever}')
+            elif p.name == 'hover_max_hold_s':
+                self.hover_max_hold_s = float(p.value)
+                self.node.get_logger().warn(f'[PARAM] hover_max_hold_s -> {self.hover_max_hold_s:.3f}s')
+            elif p.name == 'spin_duration_s':
+                self.spin_duration_s = float(p.value)
+                self.node.get_logger().warn(f'[PARAM] spin_duration_s -> {self.spin_duration_s:.2f}s')
+            elif p.name == 'square_turn_rate_deg_s':
+                self.square_turn_rate_deg_s = float(p.value)
+                self.node.get_logger().warn(f'[PARAM] square_turn_rate_deg_s -> {self.square_turn_rate_deg_s:.1f} deg/s')
         return SetParametersResult(successful=True)
 
     # ========== E-STOP helpers ==========
     def _publish_estop_state(self):
         self.pub_estop.publish(Bool(data=self.estop_latched))
 
-    # ========== Internal send wrappers (dry-run & E-STOP aware) ==========
+    # ========== Internal send wrappers ==========
     def _send_hover_setpoint(self, vx: float, vy: float, yawrate_deg: float, z: float):
         if self.estop_latched:
             self.node.get_logger().warn("[E-STOP] hover 차단됨")
@@ -156,7 +204,6 @@ class ControlManager:
             pass
 
     def _enable_hl(self) -> bool:
-        """HL 활성화. E-STOP 잠금 중이면 False. dry_run이면 로그만."""
         if self.estop_latched:
             self.node.get_logger().warn('[E-STOP] HL enable 차단됨')
             return False
@@ -218,8 +265,7 @@ class ControlManager:
             return
         with self._lock:
             self._last_hover = msg
-            now = self.node.get_clock().now().nanoseconds * 1e-9
-            self._last_hover_time = now
+            self._last_hover_time = self.node.get_clock().now().nanoseconds * 1e-9
 
     def _hover_tick(self):
         with self._lock:
@@ -231,19 +277,40 @@ class ControlManager:
         if (cf is None) and not self.dry_run:
             return
 
-        # 래치 중: 계속 stop만 유지 전송(너무 자주일 필요는 없지만 여기선 주기와 동일)
+        # E-STOP 래치: 계속 STOP 유지
         if self.estop_latched:
             self._send_stop()
             return
 
         now = self.node.get_clock().now().nanoseconds * 1e-9
-        if (cmd is None) or (now - t0 > self.hover_timeout_s):
+
+        # 최근 호버 명령 자체가 없으면 정지 알림
+        if cmd is None:
             self._send_notify_stop()
             return
 
+        age = now - t0
+
+        # 안전 최대 유지시간(옵션) 초과 시 정지
+        if self.hover_max_hold_s > 0.0 and age > self.hover_max_hold_s:
+            self.node.get_logger().warn(
+                f"[HOVER] max hold exceeded ({age:.3f}s > {self.hover_max_hold_s:.3f}s) → notify_stop"
+            )
+            self._send_notify_stop()
+            return
+
+        # latch 비활성인 경우: 타임아웃 넘기면 notify_stop
+        if (not self.hover_hold_forever) and (age > self.hover_timeout_s):
+            self.node.get_logger().warn(
+                f"[HOVER] 입력 타임아웃 → notify_stop 전송 (dt={age:.3f}s, limit={self.hover_timeout_s:.3f}s)"
+            )
+            self._send_notify_stop()
+            return
+
+        # 여기까지 왔으면 마지막 세트포인트를 계속 재전송(래치)
         vx = float(cmd.twist.linear.x)
         vy = float(cmd.twist.linear.y)
-        z = float(cmd.twist.linear.z)
+        z  = float(cmd.twist.linear.z)   # Crazyflie hover API: 절대 고도
         yawrate_deg = math.degrees(float(cmd.twist.angular.z))
         self._send_hover_setpoint(vx, vy, yawrate_deg, z)
 
@@ -269,9 +336,8 @@ class ControlManager:
                       float(yaw),
                       float(self.hl_durations['goto']))
 
-    # ========== Patterns (low-level continuous) ==========
+    # ========== Patterns ==========
     def _start_pattern(self, target_fn, *args, **kwargs):
-        # 한 번에 하나만
         self.stop_patterns()
         self._pat_stop.clear()
         self._pat_th = threading.Thread(target=target_fn, args=args, kwargs=kwargs, daemon=True)
@@ -283,10 +349,6 @@ class ControlManager:
         return res
 
     def _on_pattern_circle(self, msg: Float32MultiArray):
-        """
-        data = [radius_m, speed_mps, z_m, duration_s]
-        yaw_rate = speed / radius (rad/s) → deg/s
-        """
         if self.estop_latched:
             self.node.get_logger().warn('[E-STOP] circle 패턴 차단됨')
             return
@@ -301,7 +363,7 @@ class ControlManager:
 
         def _run():
             dt = 1.0 / max(1.0, self.cmd_rate_hz)
-            self.node.get_logger().info(f'[PATTERN circle] r={radius:.2f}m v={speed:.2f}m/s z={z:.2f} dur={duration:.2f}s (yaw={yawrate_deg:.1f}deg/s)')
+            self.node.get_logger().info(f'[PATTERN circle] r={radius:.2f}m v={speed:.2f}m/s z={z:.2f}m dur={duration:.2f}s (yaw={yawrate_deg:.1f}deg/s)')
             t0 = time.time()
             try:
                 while (time.time() - t0) < duration and not self._pat_stop.is_set() and not self.estop_latched:
@@ -314,15 +376,12 @@ class ControlManager:
         self._start_pattern(_run)
 
     def _on_pattern_spin(self, msg: Float32):
-        """
-        제자리 회전: yaw_rate(rad/s), duration은 파라미터 spin_duration_s
-        """
         if self.estop_latched:
             self.node.get_logger().warn('[E-STOP] spin 패턴 차단됨')
             return
 
         yawrate_deg = math.degrees(float(msg.data))
-        duration = float(self.node.get_parameter('spin_duration_s').get_parameter_value().double_value or 3.0)
+        duration = float(self.spin_duration_s)
 
         def _run():
             dt = 1.0 / max(1.0, self.cmd_rate_hz)
@@ -330,8 +389,6 @@ class ControlManager:
             t0 = time.time()
             try:
                 while (time.time() - t0) < duration and not self._pat_stop.is_set() and not self.estop_latched:
-                    # 주의: hover API의 z는 절대 고도. 0.0은 "현재 유지"가 아닙니다.
-                    # 여기서는 그대로 0.0을 사용(테스트 목적으로). 필요 시 현재 고도를 넣도록 개선하세요.
                     self._send_hover_setpoint(0.0, 0.0, yawrate_deg, 0.0)
                     time.sleep(dt)
             finally:
@@ -341,10 +398,6 @@ class ControlManager:
         self._start_pattern(_run)
 
     def _on_pattern_square(self, msg: Float32MultiArray):
-        """
-        사각 경로: data = [side_m, speed_mps, z_m]
-        각 변 직진 후 90도 회전
-        """
         if self.estop_latched:
             self.node.get_logger().warn('[E-STOP] square 패턴 차단됨')
             return
@@ -354,21 +407,19 @@ class ControlManager:
             self.node.get_logger().error('square needs [side_m, speed_mps, z_m]')
             return
         L, speed, z = map(float, d[:3])
-        turn_rate = float(self.node.get_parameter('square_turn_rate_deg_s').get_parameter_value().double_value or 90.0)
+        turn_rate = float(self.square_turn_rate_deg_s)
         move_time = abs(L / max(1e-6, speed))
-        turn_time = 90.0 / max(1e-3, abs(turn_rate))  # sec
+        turn_time = 90.0 / max(1e-3, abs(turn_rate))
 
         def _run():
             dt = 1.0 / max(1.0, self.cmd_rate_hz)
             self.node.get_logger().info(f'[PATTERN square] L={L:.2f}m v={speed:.2f} z={z:.2f} (turn={turn_rate:.1f}deg/s)')
             try:
-                for i in range(4):
-                    # straight
+                for _ in range(4):
                     t0 = time.time()
                     while (time.time() - t0) < move_time and not self._pat_stop.is_set() and not self.estop_latched:
                         self._send_hover_setpoint(speed, 0.0, 0.0, z)
                         time.sleep(dt)
-                    # turn 90 deg
                     t1 = time.time()
                     yaw_deg_s = turn_rate if speed >= 0 else -turn_rate
                     while (time.time() - t1) < turn_time and not self._pat_stop.is_set() and not self.estop_latched:
@@ -382,7 +433,6 @@ class ControlManager:
 
     # ========== Services ==========
     def _srv_stop_cb(self, req, res):
-        # 래치 + 즉시 모터 컷
         self.estop_latched = True
         self._publish_estop_state()
         self._send_stop()
@@ -391,7 +441,6 @@ class ControlManager:
         return res
 
     def _srv_estop_reset(self, req, res):
-        # 사용자가 명시적으로 해제할 때만 열림
         self.estop_latched = False
         self._publish_estop_state()
         res.success = True
@@ -399,7 +448,6 @@ class ControlManager:
         return res
 
     def _srv_notify_cb(self, req, res):
-        # 래치 중이어도 notify 자체는 안전 동작으로 허용 가능
         self._send_notify_stop()
         res.success = True
         res.message = 'notify_setpoint_stop (or SIM) sent'

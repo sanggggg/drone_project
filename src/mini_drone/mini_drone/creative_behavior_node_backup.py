@@ -36,7 +36,6 @@ class Phase(Enum):
     DETECT = auto()
     GREET_DOWN = auto()
     GREET_UP = auto()
-    GREET_SPIN = auto()   # ← 추가: 인사 후 제자리 회전
     AVOID = auto()
     FORWARD2 = auto()
     AVOID2 = auto()
@@ -49,10 +48,9 @@ class Phase(Enum):
 class CreativeBehaviorNode(Node):
     """
     고수준 행동 상태머신 노드.
-    - DETECT 구간: 별도 타이머로 hover setpoint를 50Hz로 전송(추론 중 끊김 방지)
+    - DETECT 구간: 별도 타이머로 hover 세트포인트를 50Hz로 전송(추론 중 끊김 방지)
     - stop_after 파라미터로 중간 정지 시점 선택 가능(detect/greet/avoid/full)
-    - "인사": 목표고도에서 greet_delta_z 만큼 내렸다가(GREET_DOWN) 잠시 대기 → 다시 목표고도로 복귀(GREET_UP)
-    - GREET_UP 이후 GREET_SPIN 단계에서 제자리 회전(기본 360°) 수행
+    - "인사" 동작: 목표고도에서 greet_delta_z 만큼 내려(GREET_DOWN) 잠시 대기 → 다시 목표고도로 복귀(GREET_UP)
     """
 
     def __init__(self):
@@ -91,12 +89,6 @@ class CreativeBehaviorNode(Node):
         self.declare_parameter("forward3_time_s", 3.0)
         self.declare_parameter("greet_delta_z_m", 0.15)
         self.declare_parameter("greet_pause_s", 0.8)
-
-        # 인사 후 회전 관련 파라미터
-        self.declare_parameter("greet_spin_enabled", True)
-        self.declare_parameter("greet_spin_degrees", 360.0)  # 총 회전 각도
-        self.declare_parameter("greet_spin_deg_s", 90.0)     # 회전 속도 (도/초)
-
         self.declare_parameter("avoid_lateral_speed_mps", 0.25)
         self.declare_parameter("avoid_forward_speed_mps", 0.15)
         self.declare_parameter("avoid_time_s", 2.0)
@@ -111,7 +103,8 @@ class CreativeBehaviorNode(Node):
         self.declare_parameter("detect_center_weight", 0.3)
         self.declare_parameter("detect_timeout_s", 12.0)
 
-        # 테스트/정지 지점 선택: detect/greet/avoid/full
+        # 테스트/정지 지점 선택
+        # detect/greet/avoid/full
         self.declare_parameter("stop_after", "greet")
 
         # ---------- Load params ----------
@@ -128,11 +121,6 @@ class CreativeBehaviorNode(Node):
         self.forward3_time = float(p("forward3_time_s").double_value or 3.0)
         self.greet_dz = float(p("greet_delta_z_m").double_value or 0.15)
         self.greet_pause = float(p("greet_pause_s").double_value or 0.8)
-
-        self.greet_spin_enabled = bool(p("greet_spin_enabled").bool_value)
-        self.greet_spin_degrees = float(p("greet_spin_degrees").double_value or 360.0)
-        self.greet_spin_deg_s = float(p("greet_spin_deg_s").double_value or 90.0)
-
         self.v_avoid_lat = float(p("avoid_lateral_speed_mps").double_value or 0.25)
         self.v_avoid_fwd = float(p("avoid_forward_speed_mps").double_value or 0.15)
         self.avoid_time = float(p("avoid_time_s").double_value or 2.0)
@@ -211,9 +199,6 @@ class CreativeBehaviorNode(Node):
         self._detect_hover_timer = None
         self._detect_hover_rate_hz = 50.0
 
-        # GREET_SPIN 지속시간(초) 계산 값 저장용
-        self._greet_spin_duration = 0.0
-
         # 상태머신 tick
         self.create_timer(1.0 / max(1.0, self.cmd_rate), self._tick)
 
@@ -223,8 +208,7 @@ class CreativeBehaviorNode(Node):
             f"fwd1={self.forward1_time:.2f}s, fwd2={self.forward2_time:.2f}s, fwd3={self.forward3_time:.2f}s, "
             f"avoid(vx={self.v_avoid_fwd:.2f}, vy={self.v_avoid_lat:.2f}, t={self.avoid_time:.2f}s), "
             f"detect_to={self.detect_timeout_s:.2f}s, safety_front_min={self.safety_front_min:.2f}m, "
-            f"stop_after={self.stop_after}, greet_spin_enabled={self.greet_spin_enabled}, "
-            f"greet_spin={self.greet_spin_degrees:.1f}deg@{self.greet_spin_deg_s:.1f}deg/s"
+            f"stop_after={self.stop_after}"
         )
 
         # 외부 land 감시(우리 노드가 보낸 착륙과 구분)
@@ -325,8 +309,8 @@ class CreativeBehaviorNode(Node):
                 self._detect_hover_timer.cancel()
             except Exception:
                 pass
-        self._detect_hover_timer = None
-        self.get_logger().info("[DETECT] hover hold stop")
+            self._detect_hover_timer = None
+            self.get_logger().info("[DETECT] hover hold stop")
 
     # ------------- Detection -------------
     def _detect_person(self) -> Tuple[bool, Optional[float]]:
@@ -353,7 +337,7 @@ class CreativeBehaviorNode(Node):
                     if score > score_best:
                         score_best = score
                         best_x = cx
-                        found = True
+                    found = True
                 if found and best_x is not None and W > 0:
                     x_off_norm = (best_x - W/2.0) / (W/2.0)
                     return True, float(x_off_norm)
@@ -426,6 +410,7 @@ class CreativeBehaviorNode(Node):
         elif self.phase == Phase.DETECT:
             detected, xoff = self._detect_person()
             if detected:
+                # stop_after == detect 인 경우 바로 착륙
                 if self.stop_after == "detect":
                     self.get_logger().info("사람 인식! (stop_after=detect) → 즉시 착륙")
                     self._stop_detect_hover()
@@ -437,6 +422,7 @@ class CreativeBehaviorNode(Node):
                 if xoff is not None:
                     self.avoid_dir = -1 if xoff < 0.0 else 1
                 self.get_logger().info(f"사람 인식! x_offset={xoff if xoff is not None else 'NA'} → 인사")
+                # 인사: 아래로 내렸다가 대기 후 다시 올림 (아래 단계에서 처리)
                 self._publish_goto_z(max(0.1, self.alt_target - self.greet_dz))
                 self._stop_detect_hover()
                 self.phase = Phase.GREET_DOWN
@@ -448,7 +434,7 @@ class CreativeBehaviorNode(Node):
                 self.phase = Phase.LAND
                 self.phase_t0 = now
             else:
-                # DETECT 중 호버는 별도 타이머가 전송 중
+                # 호버는 DETECT 전용 타이머가 전송 중
                 pass
 
         elif self.phase == Phase.GREET_DOWN:
@@ -459,41 +445,15 @@ class CreativeBehaviorNode(Node):
                 self.phase_t0 = now
 
         elif self.phase == Phase.GREET_UP:
-            # 여기서는 hover를 보내지 않음(HL goto로 복귀 중)
             if (now - self.phase_t0) > self.greet_pause:
-                # 인사 종료 → 회전 단계 또는 다음 단계
-                if self.greet_spin_enabled:
-                    self._greet_spin_duration = abs(self.greet_spin_degrees) / max(1e-3, abs(self.greet_spin_deg_s))
-                    self.get_logger().info(
-                        f"인사 완료 → 제자리 회전 시작 ({self.greet_spin_degrees:.1f}deg @ {self.greet_spin_deg_s:.1f}deg/s ≈ {self._greet_spin_duration:.2f}s)"
-                    )
-                    self.phase = Phase.GREET_SPIN
-                    self.phase_t0 = now
-                else:
-                    if self.stop_after == "greet":
-                        self.get_logger().info("인사 완료 (stop_after=greet) → 착륙")
-                        self._publish_land(0.0, reason="stop_after=greet")
-                        self.phase = Phase.LAND
-                        self.phase_t0 = now
-                    else:
-                        self.get_logger().info("인사 완료 → 회피1(대각)")
-                        self.phase = Phase.AVOID
-                        self.phase_t0 = now
-
-        elif self.phase == Phase.GREET_SPIN:
-            # 제자리 회전: hover로 yaw_rate만 전달 (vx=vy=0, z=alt_target)
-            yaw_rate_rad = math.radians(self.greet_spin_deg_s)
-            self._publish_hover(0.0, 0.0, self.alt_target, yaw_rate_rad)
-            if (now - self.phase_t0) >= self._greet_spin_duration:
-                # 회전 종료 → hover 중지용 한 번 0 yaw 전송(옵션)
-                self._publish_hover(0.0, 0.0, self.alt_target, 0.0)
+                # stop_after == greet 인 경우 여기에서 종료
                 if self.stop_after == "greet":
-                    self.get_logger().info("제자리 회전 완료 (stop_after=greet) → 착륙")
-                    self._publish_land(0.0, reason="stop_after=greet_after_spin")
+                    self.get_logger().info("인사 완료 (stop_after=greet) → 착륙")
+                    self._publish_land(0.0, reason="stop_after=greet")
                     self.phase = Phase.LAND
                     self.phase_t0 = now
                 else:
-                    self.get_logger().info("제자리 회전 완료 → 회피1(대각)")
+                    self.get_logger().info("인사 완료 → 회피1(대각)")
                     self.phase = Phase.AVOID
                     self.phase_t0 = now
 
@@ -537,7 +497,6 @@ class CreativeBehaviorNode(Node):
                 self.phase_t0 = now
 
         elif self.phase == Phase.LAND:
-            # 이 상태에서는 hover 명령을 더 이상 보내지 않음(HL land가 우선)
             if self.odom is not None and self.odom.pose.pose.position.z <= 0.05:
                 self.get_logger().info("착륙 완료. 동작 종료")
                 self.phase = Phase.DONE
@@ -551,6 +510,8 @@ class CreativeBehaviorNode(Node):
                     except Exception:
                         pass
                 self.phase_t0 = now
+
+    # ---- main ----
 
 
 def main():

@@ -41,11 +41,11 @@ def generate_launch_description():
     avoid_speed_arg = DeclareLaunchArgument('avoid_lateral_speed_mps', default_value='0.25')
     avoid_time_arg = DeclareLaunchArgument('avoid_time_s', default_value='2.0')
     hover_cmd_rate_arg = DeclareLaunchArgument('hover_cmd_rate_hz', default_value='30.0')
-    safety_front_min_arg = DeclareLaunchArgument('safety_front_min_m', default_value='0.5')
+    safety_front_min_arg = DeclareLaunchArgument('safety_front_min_m', default_value='0.00')
 
     use_yolo_arg = DeclareLaunchArgument('use_yolo', default_value='true')
     yolo_model_path_arg = DeclareLaunchArgument('yolo_model_path', default_value='yolov8n.pt')
-    yolo_conf_th_arg = DeclareLaunchArgument('yolo_conf_th', default_value='0.4')
+    yolo_conf_th_arg = DeclareLaunchArgument('yolo_conf_th', default_value='0.2')
     detect_center_weight_arg = DeclareLaunchArgument('detect_center_weight', default_value='0.3')
     detect_timeout_arg = DeclareLaunchArgument('detect_timeout_s', default_value='12.0')
 

@@ -26,6 +26,7 @@ setup(
             'ai_deck_camera = mini_drone.ai_deck_camera_node:main',
             'cf_bridge = mini_drone.cf_bridge_node:main',
             'creative_behavior = mini_drone.creative_behavior_node:main',
+            'hover_test = mini_drone.hover_test:main',
         ],
     },
 )
