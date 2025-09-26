@@ -176,6 +176,8 @@ class CreativeBehaviorNode(Node):
 
         self.inter_pause = float(p("inter_phase_pause_s").double_value or 1.0)
 
+        self._z_hold = self.alt_target
+
         # ---------- QoS ----------
         qos_ctrl = _qos_ctrl()
         qos_sense = _qos_sense_best()
@@ -272,8 +274,8 @@ class CreativeBehaviorNode(Node):
 
     # ---- helpers ----
     def _hold_z(self) -> float:
-        if self.odom is not None:
-            return float(self.odom.pose.pose.position.z)
+        # if self.odom is not None:
+        #     return float(self.odom.pose.pose.position.z)
         return float(self.alt_target)
 
     def _request_pause(self, next_phase: Phase, note: str = ""):
@@ -475,7 +477,7 @@ class CreativeBehaviorNode(Node):
         return False, None
 
     # ---------- 램프 유틸 (고도 선형 변경) ----------
-    def _ramp_alt_to(self, target_z: float) -> bool:
+    def prev_ramp_alt_to(self, target_z: float) -> bool:
         """
         현재 고도를 target_z로 선형 램프. 한 틱에서 한 걸음 진행하고, 목표 근접시 True 반환.
         """
@@ -497,6 +499,20 @@ class CreativeBehaviorNode(Node):
         z_cmd = max(0.08, z_cmd)
 
         self._publish_hover(0.0, 0.0, z_cmd, 0.0)
+        return False
+
+    def _ramp_alt_to(self, target_z: float) -> bool:
+        # _z_hold를 매 tick마다 target 쪽으로 부드럽게 이동
+        dz  = target_z - self._z_hold
+        if abs(dz) <= self.greet_z_tol:
+            self._z_hold = target_z
+            self._publish_hover(0.0, 0.0, self._z_hold, 0.0)
+            return True
+        
+        step = self.greet_vz / max(1.0, self.cmd_rate)   # m per tick
+        self._z_hold += step * (1.0 if dz > 0 else -1.0)
+        self._z_hold = max(0.08, self._z_hold)           # 바닥 안전 클램프
+        self._publish_hover(0.0, 0.0, self._z_hold, 0.0)
         return False
 
     # ------------- Main tick -------------

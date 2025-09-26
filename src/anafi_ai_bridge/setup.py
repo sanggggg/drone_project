@@ -36,6 +36,7 @@ setup(
             'anafi_follow_apriltag_with_debug = anafi_ai_bridge.anafi_follow_apriltag_with_debug:main',
             'apriltag_debug_overlay = anafi_ai_bridge.apriltag_debug_overlay:main',
             'anafi_keyboard_control = anafi_ai_bridge.anafi_keyboard_control:main',
+            'anafi_follow_cf_commands = anafi_ai_bridge.anafi_follow_cf_commands:main',
         ],
     },
 )
