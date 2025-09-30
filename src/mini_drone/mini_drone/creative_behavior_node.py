@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import math
+import time
 from enum import Enum, auto
 from typing import Optional, Tuple
 
@@ -31,7 +32,6 @@ except Exception:
 class Phase(Enum):
     IDLE = auto()
     TAKEOFF = auto()
-    PAUSE = auto()
     FORWARD1 = auto()
     DETECT = auto()
     GREET_DOWN = auto()
@@ -48,18 +48,16 @@ class Phase(Enum):
 
 class CreativeBehaviorNode(Node):
     """
-    수정 사항 요약:
-    - 명령 발행은 오직 메인 타이머 1개에서만 수행(경합 제거)
-    - TAKEOFF/LAND는 HL 전용, 다른 단계는 Hover 전용(혼용 금지)
-    - _z_hold로 고도 목표를 내부 추종, 경계/PAUSE에서도 동일 고도 유지
-    - 전이 직후 즉시 return 하여 이전 단계 명령이 끼어들지 않도록 처리
-    - DETECT 전용 hover 타이머/ LAND 재시도 타이머 제거 → LAND 단계 내부에서 고주기 재전송
+    - DETECT: 50Hz hover 유지
+    - GREET: 10cm 내려갔다가(greet_delta_z_m=0.10) 잠깐 대기 → 원고도로 복귀 → 제자리 회전(GREET_SPIN)
+    - stop_after=full(기본): 회전 → 회피1 → 전진2 → 회피2 → 전진3 → 착륙
+    - 착륙: notify_stop 호출로 hover 래치 해제 → HL land 반복 전송 → 고도 임계 도달 시 DONE
     """
 
     def __init__(self):
         super().__init__("creative_behavior")
 
-        # ---------- QoS ----------
+        # ---------- QoS helpers ----------
         def _qos_ctrl():
             q = QoSProfile(depth=10)
             q.reliability = ReliabilityPolicy.RELIABLE
@@ -72,12 +70,10 @@ class CreativeBehaviorNode(Node):
             q.history = HistoryPolicy.KEEP_LAST
             return q
 
-        qos_ctrl = _qos_ctrl()
-        qos_sense = _qos_sense_best()
-
         # ---------- Emergency Stop ----------
         self._estop = False
-        self.create_subscription(Bool, '/cf/estop', self._on_estop, qos_ctrl)
+        qos_estop = _qos_sense_best()  # 발행자와 맞춤
+        self.create_subscription(Bool, '/cf/estop', self._on_estop, qos_estop)
 
         # ---------- Parameters ----------
         # 토픽
@@ -85,7 +81,7 @@ class CreativeBehaviorNode(Node):
         self.declare_parameter("odom_topic", "/cf/odom")
         self.declare_parameter("front_range_topic", "/cf/range/front")
 
-        # 시나리오 파라미터
+        # 시나리오
         self.declare_parameter("takeoff_height_m", 0.4)
         self.declare_parameter("takeoff_timeout_s", 8.0)
         self.declare_parameter("forward_speed_mps", 0.3)
@@ -93,16 +89,12 @@ class CreativeBehaviorNode(Node):
         self.declare_parameter("forward2_time_s", 3.0)
         self.declare_parameter("forward3_time_s", 3.0)
 
-        # 인사(고도 램프)
-        self.declare_parameter("greet_delta_z_m", 0.15)
-        self.declare_parameter("greet_pause_s", 0.5)
-        self.declare_parameter("greet_vz_mps", 0.2)
-        self.declare_parameter("greet_z_tol_m", 0.02)
-
-        # 회전
+        # 인사(하강/상승 + 회전)
+        self.declare_parameter("greet_delta_z_m", 0.10)   # ★ 10cm
+        self.declare_parameter("greet_pause_s", 0.6)
         self.declare_parameter("greet_spin_enabled", True)
         self.declare_parameter("greet_spin_degrees", 360.0)
-        self.declare_parameter("greet_spin_deg_s", 90.0)
+        self.declare_parameter("greet_spin_deg_s", 90.0)  # 초당 90도 → 4초
 
         # 회피/기타
         self.declare_parameter("avoid_lateral_speed_mps", 0.25)
@@ -113,87 +105,115 @@ class CreativeBehaviorNode(Node):
 
         # 탐지
         self.declare_parameter("use_yolo", True)
-        self.declare_parameter("yolo_model_path", "yolov8n.pt")
+        self.declare_parameter("yolo_model_path", "/home/rubis/drone_project/yolov8n.pt")
         self.declare_parameter("yolo_conf_th", 0.1)
         self.declare_parameter("hog_stride", 8)
         self.declare_parameter("detect_center_weight", 0.3)
         self.declare_parameter("detect_timeout_s", 12.0)
 
-        # 테스트/정지 지점 선택: detect/greet/avoid/full
-        self.declare_parameter("stop_after", "greet")
+        # 시퀀스 중단 시점(기본: full)
+        self.declare_parameter("stop_after", "full")
 
-        # 착륙
-        self.declare_parameter("land_repeat_hz", 10.0)   # LAND 단계에서 재전송 주기(메인 tick 내에서 사용)
+        # 착륙 신뢰성
+        self.declare_parameter("land_retry_s", 3.0)
+        self.declare_parameter("land_repeat_hz", 5.0)
         self.declare_parameter("land_alt_thresh_m", 0.05)
 
-        # 동작 간 정지 시간
-        self.declare_parameter("inter_phase_pause_s", 1.0)
+        # ---------- robust param getters ----------
+        def _get_double(name: str, default: float) -> float:
+            try:
+                v = self.get_parameter(name).get_parameter_value().double_value
+                return v if v != 0.0 else default
+            except Exception:
+                return default
+
+        def _get_int(name: str, default: int) -> int:
+            try:
+                v = self.get_parameter(name).get_parameter_value().integer_value
+                return int(v) if v != 0 else default
+            except Exception:
+                return default
+
+        def _get_bool(name: str, default: bool) -> bool:
+            try:
+                return bool(self.get_parameter(name).get_parameter_value().bool_value)
+            except Exception:
+                return default
+
+        def _get_str(name: str, default: str) -> str:
+            try:
+                s = self.get_parameter(name).get_parameter_value().string_value
+                return s or default
+            except Exception:
+                return default
 
         # ---------- Load params ----------
-        p = lambda n: self.get_parameter(n).get_parameter_value()
-        self.image_topic = p("image_topic").string_value
-        self.odom_topic = p("odom_topic").string_value
-        self.front_range_topic = p("front_range_topic").string_value
+        self.image_topic = _get_str("image_topic", "/camera/image")
+        self.odom_topic = _get_str("odom_topic", "/cf/odom")
+        self.front_range_topic = _get_str("front_range_topic", "/cf/range/front")
 
-        self.alt_target = float(p("takeoff_height_m").double_value or 0.4)
-        self.takeoff_timeout_s = float(p("takeoff_timeout_s").double_value or 8.0)
-        self.v_forward = float(p("forward_speed_mps").double_value or 0.3)
-        self.forward1_time = float(p("forward1_time_s").double_value or 1.0)
-        self.forward2_time = float(p("forward2_time_s").double_value or 3.0)
-        self.forward3_time = float(p("forward3_time_s").double_value or 3.0)
+        self.alt_target = _get_double("takeoff_height_m", 0.4)
+        self.takeoff_timeout_s = _get_double("takeoff_timeout_s", 8.0)
+        self.v_forward = _get_double("forward_speed_mps", 0.3)
+        self.forward1_time = _get_double("forward1_time_s", 1.0)
+        self.forward2_time = _get_double("forward2_time_s", 3.0)
+        self.forward3_time = _get_double("forward3_time_s", 3.0)
 
-        self.greet_dz = float(p("greet_delta_z_m").double_value or 0.15)
-        self.greet_pause = float(p("greet_pause_s").double_value or 0.5)
-        self.greet_vz = abs(float(p("greet_vz_mps").double_value or 0.2))
-        self.greet_z_tol = float(p("greet_z_tol_m").double_value or 0.02)
+        self.greet_dz = _get_double("greet_delta_z_m", 0.10)
+        self.greet_pause = _get_double("greet_pause_s", 0.6)
+        self.greet_spin_enabled = _get_bool("greet_spin_enabled", True)
+        self.greet_spin_degrees = _get_double("greet_spin_degrees", 360.0)
+        self.greet_spin_deg_s = _get_double("greet_spin_deg_s", 90.0)
 
-        self.greet_spin_enabled = bool(p("greet_spin_enabled").bool_value)
-        self.greet_spin_degrees = float(p("greet_spin_degrees").double_value or 360.0)
-        self.greet_spin_deg_s = float(p("greet_spin_deg_s").double_value or 90.0)
+        self.v_avoid_lat = _get_double("avoid_lateral_speed_mps", 0.25)
+        self.v_avoid_fwd = _get_double("avoid_forward_speed_mps", 0.15)
+        self.avoid_time = _get_double("avoid_time_s", 2.0)
+        self.cmd_rate = _get_double("hover_cmd_rate_hz", 30.0)
+        self.safety_front_min = _get_double("safety_front_min_m", 0.0)
 
-        self.v_avoid_lat = float(p("avoid_lateral_speed_mps").double_value or 0.25)
-        self.v_avoid_fwd = float(p("avoid_forward_speed_mps").double_value or 0.15)
-        self.avoid_time = float(p("avoid_time_s").double_value or 2.0)
-        self.cmd_rate = float(p("hover_cmd_rate_hz").double_value or 30.0)
-        self.safety_front_min = float(p("safety_front_min_m").double_value or 0.00)
+        self.use_yolo = _get_bool("use_yolo", True)
+        self.yolo_model_path = _get_str("yolo_model_path", "yolov8n.pt")
+        self.yolo_conf_th = _get_double("yolo_conf_th", 0.1)
+        self.hog_stride = _get_int("hog_stride", 8)
+        self.detect_center_weight = _get_double("detect_center_weight", 0.3)
+        self.detect_timeout_s = _get_double("detect_timeout_s", 12.0)
 
-        self.use_yolo = bool(p("use_yolo").bool_value or True)
-        self.yolo_model_path = p("yolo_model_path").string_value or "yolov8n.pt"
-        self.yolo_conf_th = float(p("yolo_conf_th").double_value or 0.6)
-        self.hog_stride = int(p("hog_stride").integer_value or 8)
-        self.detect_center_weight = float(p("detect_center_weight").double_value or 0.3)
-        self.detect_timeout_s = float(p("detect_timeout_s").double_value or 12.0)
-
-        self.stop_after = (p("stop_after").string_value or "greet").lower()
+        self.stop_after = _get_str("stop_after", "full").lower()
         if self.stop_after not in ("detect", "greet", "avoid", "full"):
-            self.get_logger().warn(f"stop_after 값이 올바르지 않습니다: {self.stop_after}, 'greet'로 설정합니다.")
-            self.stop_after = "greet"
+            self.get_logger().warn(f"stop_after 값이 올바르지 않습니다: {self.stop_after}, 'full'로 설정")
+            self.stop_after = "full"
 
-        self.land_repeat_hz = float(p("land_repeat_hz").double_value or 10.0)
-        self.land_alt_thresh = float(p("land_alt_thresh_m").double_value or 0.05)
-        self.inter_pause = float(p("inter_phase_pause_s").double_value or 1.0)
+        self.land_retry_s = _get_double("land_retry_s", 3.0)
+        self.land_repeat_hz = _get_double("land_repeat_hz", 5.0)
+        self.land_alt_thresh = _get_double("land_alt_thresh_m", 0.05)
 
-        # ---------- Publishers ----------
+        # ---------- QoS ----------
+        qos_ctrl = _qos_ctrl()
+        qos_sense = _qos_sense_best()
+
+        # ---------- Publishers (control) ----------
         self.pub_takeoff = self.create_publisher(Float32, "/cf/hl/takeoff", qos_ctrl)
         self.pub_land = self.create_publisher(Float32, "/cf/hl/land", qos_ctrl)
+        self.pub_goto = self.create_publisher(PoseStamped, "/cf/hl/goto", qos_ctrl)
         self.pub_hover = self.create_publisher(TwistStamped, "/cf/cmd_hover", qos_ctrl)
-        self.pub_goto = self.create_publisher(PoseStamped, "/cf/hl/goto", qos_ctrl)  # 미사용(혼용 방지)
 
         # ---------- Services ----------
-        self.cli_stop = self.create_client(Trigger, "/cf/stop")  # 종료 시도용(옵션)
+        self.cli_stop = self.create_client(Trigger, "/cf/stop")
+        self.cli_notify_stop = self.create_client(Trigger, "/cf/notify_stop")
 
-        # ---------- Subscriptions ----------
+        # ---------- Subscribers (sensing) ----------
         self.sub_odom = self.create_subscription(Odometry, self.odom_topic, self._on_odom, qos_sense)
         self.sub_front = self.create_subscription(Range, self.front_range_topic, self._on_front, qos_sense)
 
+        # 카메라
         self.bridge = CvBridge() if CvBridge else None
         self.last_img = None
         if self.bridge is not None:
             self.sub_img = self.create_subscription(Image, self.image_topic, self._on_image, qos_sense)
         else:
-            self.get_logger().warn("cv_bridge 불러오기 실패: 카메라 입력 없이 동작합니다.")
+            self.get_logger().warn("cv_bridge를 불러오지 못했습니다. 카메라 입력 없이 동작합니다.")
 
-        # ---------- Detector ----------
+        # ---------- Detector init ----------
         self.detector_name = "none"
         self.yolo = None
         self.hog = None
@@ -201,7 +221,7 @@ class CreativeBehaviorNode(Node):
             try:
                 self.yolo = YOLO(self.yolo_model_path)
                 self.detector_name = "yolo"
-                self.get_logger().info(f"YOLO 로드 성공: {self.yolo_model_path}")
+                self.get_logger().info(f"YOLO 로드 성공: {self.yolo_model_path} (conf_th={self.yolo_conf_th:.2f})")
             except Exception as e:
                 self.get_logger().warn(f"YOLO 로드 실패: {e}")
         if self.yolo is None and cv2 is not None:
@@ -219,29 +239,22 @@ class CreativeBehaviorNode(Node):
         self.odom: Optional[Odometry] = None
         self.front_m: Optional[float] = None
         self.alt_current = 0.0
-
-        # 내부 고도 홀드(항상 현재 추종 → 경계에서도 점프 방지)
-        self._z_hold = self.alt_target  # 초기 목표 고도
-        self._z_min = 0.08
-
         self.avoid_dir = -1
+
+        # 고정 목표 고도 (hover에 사용)
+        self._z_min = 0.08
+        self._z_hold = max(self._z_min, self.alt_target)
+
+        # 착륙 재시도 타이머
+        self._land_timer = None
+        self._land_t0 = 0.0
         self._land_issued_by_me = False
 
-        # GREET 관련
-        self._greet_target_z = None
-        self._greet_pause_t0 = 0.0
-        self._greet_spin_duration = 0.0
+        # DETECT 전용 호버 타이머
+        self._detect_hover_timer = None
+        self._detect_hover_rate_hz = 50.0
 
-        # PAUSE 관련
-        self._pause_until = 0.0
-        self._pause_next: Optional[Phase] = None
-        self._pause_note = ""
-
-        # LAND 주기 제어용
-        self._last_land_send = 0.0
-        self._land_interval = 1.0 / max(1.0, self.land_repeat_hz)
-
-        # 단일 타이머
+        # 상태머신 tick
         self.create_timer(1.0 / max(1.0, self.cmd_rate), self._tick)
 
         self.get_logger().info("Creative behavior node 시작")
@@ -250,29 +263,39 @@ class CreativeBehaviorNode(Node):
             f"fwd1={self.forward1_time:.2f}s, fwd2={self.forward2_time:.2f}s, fwd3={self.forward3_time:.2f}s, "
             f"avoid(vx={self.v_avoid_fwd:.2f}, vy={self.v_avoid_lat:.2f}, t={self.avoid_time:.2f}s), "
             f"detect_to={self.detect_timeout_s:.2f}s, safety_front_min={self.safety_front_min:.2f}m, "
-            f"stop_after={self.stop_after}, greet_spin_enabled={self.greet_spin_enabled}, "
-            f"greet_spin={self.greet_spin_degrees:.1f}deg@{self.greet_spin_deg_s:.1f}deg/s, "
-            f"greet_vz={self.greet_vz:.2f}m/s, pause={self.inter_pause:.2f}s"
+            f"stop_after={self.stop_after}, greet_dz={self.greet_dz:.2f}m, spin={self.greet_spin_degrees:.0f}@{self.greet_spin_deg_s:.0f}deg/s"
         )
 
-    # ---------- Utils ----------
-    def _now(self) -> float:
-        return self.get_clock().now().nanoseconds * 1e-9
+        # 외부 land 감시(우리 노드가 보낸 착륙과 구분)
+        self.create_subscription(Float32, "/cf/hl/land", self._on_land_cmd, qos_ctrl)
 
+    # ---- helpers ----
+    def _hold_z(self) -> float:
+        return max(self._z_min, float(self._z_hold))
+
+    # ---------- Emergency Stop ----------
     def _on_estop(self, msg: Bool):
         if msg.data and not self._estop:
             self._estop = True
-            self.get_logger().warn("E-STOP latched → 동작 중지 및 착륙")
+            self.get_logger().warn('E-STOP latched → 동작 중지')
+            self._stop_detect_hover()
             self._begin_landing(reason="estop")
             self.phase = Phase.ABORT
             self.phase_t0 = self._now()
 
+    # ---------- 외부 land 감시 ----------
+    def _on_land_cmd(self, msg: Float32):
+        if not getattr(self, "_land_issued_by_me", False):
+            self.get_logger().warn(f"[LAND] 외부 land 수신(z={float(msg.data):.2f}). 우리 노드가 보낸 착륙 아님.")
+        self._land_issued_by_me = False
+
+    # ------------- Utils -------------
+    def _now(self) -> float:
+        return self.get_clock().now().nanoseconds * 1e-9
+
     def _on_odom(self, msg: Odometry):
         self.odom = msg
         self.alt_current = float(msg.pose.pose.position.z)
-        # 내부 홀드는 실제 고도를 점진 추종(점프 방지)
-        # 이곳에서 너무 빠르게 당기고 싶지 않다면 low-pass를 써도 됨. 여기선 즉시 동기화.
-        self._z_hold = max(self._z_min, self.alt_current)
 
     def _on_front(self, msg: Range):
         self.front_m = float(msg.range)
@@ -286,49 +309,118 @@ class CreativeBehaviorNode(Node):
         except Exception as e:
             self.get_logger().warn(f"이미지 변환 실패: {e}")
 
-    # ---------- Publishers ----------
     def _publish_hover(self, vx: float, vy: float, z: float, yaw_rate_rad_s: float = 0.0):
+        if self._estop:
+            return
         msg = TwistStamped()
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.twist.linear.x = float(vx)
         msg.twist.linear.y = float(vy)
-        msg.twist.linear.z = float(z)     # 이 코드에서는 '절대 고도'로 사용
+        msg.twist.linear.z = float(z)
         msg.twist.angular.z = float(yaw_rate_rad_s)
         self.pub_hover.publish(msg)
 
     def _publish_takeoff(self, z: float):
-        if not self._estop:
-            self.pub_takeoff.publish(Float32(data=float(z)))
+        if self._estop:
+            return
+        self.pub_takeoff.publish(Float32(data=float(z)))
 
     def _publish_land(self, z: float = 0.0, reason: str = ""):
+        if self._estop:
+            return
         self._land_issued_by_me = True
         if reason:
             self.get_logger().warn(f"[LAND] reason={reason}")
         self.pub_land.publish(Float32(data=float(z)))
 
-    # ---------- Helpers ----------
-    def _request_pause(self, next_phase: Phase, note: str = ""):
+    def _publish_goto_z(self, z: float):
+        if self._estop or self.odom is None:
+            return
+        ps = PoseStamped()
+        ps.header.stamp = self.get_clock().now().to_msg()
+        ps.header.frame_id = "map"
+        ps.pose.position.x = float(self.odom.pose.pose.position.x)
+        ps.pose.position.y = float(self.odom.pose.pose.position.y)
+        ps.pose.position.z = float(z)
+        ps.pose.orientation.w = 1.0
+        self.pub_goto.publish(ps)
+
+    # ---------- DETECT 전용 호버 타이머 ----------
+    def _detect_hover_tick(self):
+        if self._estop or self.phase != Phase.DETECT:
+            return
+        self._publish_hover(0.0, 0.0, self._hold_z(), 0.0)
+
+    def _start_detect_hover(self):
+        if self._detect_hover_timer is None:
+            self._detect_hover_timer = self.create_timer(
+                1.0 / max(1.0, self._detect_hover_rate_hz), self._detect_hover_tick
+            )
+            self.get_logger().info(f"[DETECT] hover hold start @ {self._detect_hover_rate_hz:.1f} Hz")
+
+    def _stop_detect_hover(self):
+        if self._detect_hover_timer is not None:
+            try:
+                self._detect_hover_timer.cancel()
+            except Exception:
+                pass
+            self._detect_hover_timer = None
+            self.get_logger().info("[DETECT] hover hold stop")
+
+    # ---------- 착륙 공통 루틴 ----------
+    def _begin_landing(self, reason: str = ""):
+        # hover 래치 해제
+        if self.cli_notify_stop.service_is_ready():
+            try:
+                self.cli_notify_stop.call_async(Trigger.Request())
+            except Exception:
+                pass
+
+        # HL land 1회 송신
+        self._publish_land(0.0, reason=reason)
+
+        # LAND 상태 진입 및 재시도 타이머 시작
+        self.phase = Phase.LAND
+        self.phase_t0 = self._now()
+        self._land_t0 = self.phase_t0
+
+        if self._land_timer is None:
+            period = 1.0 / max(1.0, self.land_repeat_hz)
+            self._land_timer = self.create_timer(period, self._land_retry_tick)
+            self.get_logger().info(f"[LAND] retry start: {self.land_retry_s:.1f}s @ {self.land_repeat_hz:.1f} Hz")
+
+    def _land_retry_tick(self):
+        if self.phase not in (Phase.LAND, Phase.ABORT):
+            self._stop_land_retry_timer()
+            return
+
         now = self._now()
-        self._pause_until = now + self.inter_pause
-        self._pause_next = next_phase
-        self._pause_note = note
-        self.phase = Phase.PAUSE
-        self.phase_t0 = now
-        self.get_logger().info(f"[PAUSE] {note} for {self.inter_pause:.2f}s → next={next_phase.name}")
 
-    def _ramp_alt_to(self, target_z: float) -> bool:
-        """_z_hold를 target_z로 선형 램프(한 tick에서 한 걸음)."""
-        dz = target_z - self._z_hold
-        if abs(dz) <= self.greet_z_tol:
-            self._z_hold = max(self._z_min, target_z)
-            self._publish_hover(0.0, 0.0, self._z_hold, 0.0)
-            return True
-        step = self.greet_vz / max(1.0, self.cmd_rate)
-        self._z_hold += step * (1.0 if dz > 0 else -1.0)
-        self._z_hold = max(self._z_min, self._z_hold)
-        self._publish_hover(0.0, 0.0, self._z_hold, 0.0)
-        return False
+        if self.odom is not None and float(self.odom.pose.pose.position.z) <= self.land_alt_thresh:
+            self.get_logger().info("착륙 완료. 동작 종료")
+            self._stop_land_retry_timer()
+            self.phase = Phase.DONE
+            self.phase_t0 = now
+            return
 
+        if (now - self._land_t0) > self.land_retry_s:
+            self.get_logger().warn(f"[LAND] retry timeout({now - self._land_t0:.1f}s) → 최종 land 송신")
+            self._publish_land(0.0)
+            self._stop_land_retry_timer()
+            return
+
+        # LAND 중에는 hover 전송 금지. land만 반복 송신
+        self._publish_land(0.0)
+
+    def _stop_land_retry_timer(self):
+        if self._land_timer is not None:
+            try:
+                self._land_timer.cancel()
+            except Exception:
+                pass
+        self._land_timer = None
+
+    # ------------- Detection -------------
     def _detect_person(self) -> Tuple[bool, Optional[float]]:
         if self.last_img is None:
             return False, None
@@ -380,216 +472,160 @@ class CreativeBehaviorNode(Node):
 
         return False, None
 
-    def _begin_landing(self, reason: str = ""):
-        # HL 착륙 준비: Hover를 보내지 않도록 LAND 단계에서만 처리
-        self._publish_land(0.0, reason=reason)
-        self.phase = Phase.LAND
-        self.phase_t0 = self._now()
-        self._last_land_send = 0.0  # 즉시 재전송 가능하게 초기화
-
-    # ---------- Main tick ----------
+    # ------------- Main tick -------------
     def _tick(self):
+        if self._estop:
+            return
+
         now = self._now()
 
         # 안전: 전방 초근접 시 비상 착륙
         if self.front_m is not None and self.front_m < self.safety_front_min and self.phase not in (Phase.LAND, Phase.DONE, Phase.ABORT):
             self.get_logger().warn(f"전방 장애물 감지({self.front_m:.2f} m). 비상 착륙.")
+            self._stop_detect_hover()
             self._begin_landing(reason=f"front_safety front_m={self.front_m:.3f} < safety_min={self.safety_front_min}")
-            self.phase = Phase.ABORT
-            self.phase_t0 = now
             return
 
-        # ---------- PAUSE ----------
-        if self.phase == Phase.PAUSE:
-            # HL/Hover 혼용 방지: PAUSE에서는 Hover만 사용
-            self._publish_hover(0.0, 0.0, self._z_hold, 0.0)
-            if now >= self._pause_until:
-                nxt = self._pause_next
-                note = self._pause_note
-                self._pause_next = None
-                self._pause_note = ""
-                if nxt is not None:
-                    self.get_logger().info(f"[PAUSE→] {note} → {nxt.name}")
-                    self.phase = nxt
-                    self.phase_t0 = now
-                else:
-                    self.phase = Phase.DONE
-                    self.phase_t0 = now
-            return
-
-        # ---------- STATE HANDLERS ----------
+        # ---- 상태별 처리 ----
         if self.phase == Phase.TAKEOFF:
-            # HL 전용: 이 단계에서는 Hover를 보내지 않음
-            if (now - self.phase_t0) < 0.2:
+            if (now - self.phase_t0) < 0.3:
                 self._publish_takeoff(self.alt_target)
-                return  # 전이 프레임 혼입 방지
-
-            # 고도 도달 판정
-            if self.odom is not None and self.alt_current >= (self.alt_target - 0.05):
-                self.get_logger().info(f"이륙 완료 (alt={self.alt_current:.2f}m) → 전진1로")
-                # 이 시점에 내부 홀드도 목표 고도로 맞춤
+            if self.odom is not None and self.odom.pose.pose.position.z >= (self.alt_target - 0.05):
+                self.get_logger().info(f"이륙 완료 → 전진 (alt={self.odom.pose.pose.position.z:.2f}m, target={self.alt_target:.2f}m)")
                 self._z_hold = max(self._z_min, self.alt_target)
-                self._request_pause(Phase.FORWARD1, note="after TAKEOFF")
-                return
-
-            # 타임아웃
-            if (now - self.phase_t0) > self.takeoff_timeout_s:
-                self.get_logger().warn("이륙 타임아웃. 착륙 시도")
-                self._begin_landing(reason=f"takeoff_timeout elapsed={now - self.phase_t0:.2f}s > {self.takeoff_timeout_s}s")
-                self.phase = Phase.ABORT
+                self.phase = Phase.FORWARD1
                 self.phase_t0 = now
-                return
-
-            # HL 이륙 유지: 짧은 간격으로 몇 틱 더 보냄
-            self._publish_takeoff(self.alt_target)
+            elif (now - self.phase_t0) > self.takeoff_timeout_s:
+                self.get_logger().warn("이륙 타임아웃 → 착륙")
+                self._begin_landing(reason=f"takeoff_timeout {now - self.phase_t0:.2f}s")
             return
 
         if self.phase == Phase.FORWARD1:
-            self._publish_hover(self.v_forward, 0.0, self._z_hold, 0.0)
+            self._publish_hover(self.v_forward, 0.0, self._hold_z(), 0.0)
             if (now - self.phase_t0) > self.forward1_time:
-                self.get_logger().info("전진1 완료 → 사람 탐지")
-                self._request_pause(Phase.DETECT, note="after FORWARD1")
-                return
+                self.get_logger().info(
+                    f"전진1 완료 → 사람 탐지 (dt={now - self.phase_t0:.2f}s, plan={self.forward1_time:.2f}s, "
+                    f"v={self.v_forward:.2f}m/s ≈ {self.v_forward*self.forward1_time:.2f}m)"
+                )
+                self._z_hold = float(self.alt_current) if self.odom is not None else max(self._z_min, self.alt_target)
+                self.phase = Phase.DETECT
+                self.phase_t0 = now
+                self._start_detect_hover()
             return
 
         if self.phase == Phase.DETECT:
-            # Hover로 제자리 유지
-            self._publish_hover(0.0, 0.0, self._z_hold, 0.0)
             detected, xoff = self._detect_person()
             if detected:
                 if self.stop_after == "detect":
-                    self.get_logger().info("사람 인식! (stop_after=detect) → 착륙")
+                    self.get_logger().info("사람 인식! (stop_after=detect) → 즉시 착륙")
+                    self._stop_detect_hover()
                     self._begin_landing(reason="stop_after=detect")
                     return
                 if xoff is not None:
                     self.avoid_dir = -1 if xoff < 0.0 else 1
-
-                # GREET 준비
-                self._greet_target_z = max(self._z_min, self.alt_target - self.greet_dz)
-                self._greet_pause_t0 = 0.0
-                self.get_logger().info("사람 인식! → 인사(하강)로")
-                self._request_pause(Phase.GREET_DOWN, note="before GREET_DOWN")
+                self.get_logger().info(f"사람 인식! x_offset={xoff if xoff is not None else 'NA'} → 인사")
+                self._publish_goto_z(max(0.1, self.alt_target - self.greet_dz))
+                self._stop_detect_hover()
+                self.phase = Phase.GREET_DOWN
+                self.phase_t0 = now
                 return
-
             if (now - self.phase_t0) > self.detect_timeout_s:
                 self.get_logger().warn("사람 미탐지(타임아웃) → 착륙")
-                self._begin_landing(reason=f"detect_timeout elapsed={now - self.phase_t0:.2f}s > {self.detect_timeout_s}s")
+                self._stop_detect_hover()
+                self._begin_landing(reason=f"detect_timeout {now - self.phase_t0:.2f}s")
                 return
             return
 
         if self.phase == Phase.GREET_DOWN:
-            target = self._greet_target_z if self._greet_target_z is not None else max(self._z_min, self.alt_target - self.greet_dz)
-            done = self._ramp_alt_to(target)
-            if done:
-                if self._greet_pause_t0 == 0.0:
-                    self._greet_pause_t0 = now
-                if (now - self._greet_pause_t0) >= self.greet_pause:
-                    self.get_logger().info("인사 하강 완료 → 인사 상승")
-                    self._request_pause(Phase.GREET_UP, note="after GREET_DOWN")
-                    return
+            if (now - self.phase_t0) > self.greet_pause:
+                self._publish_goto_z(self.alt_target)
+                self.phase = Phase.GREET_UP
+                self.phase_t0 = now
             return
 
         if self.phase == Phase.GREET_UP:
-            done = self._ramp_alt_to(self.alt_target)
-            if done:
-                if self._greet_pause_t0 == 0.0:
-                    self._greet_pause_t0 = now
-                if (now - self._greet_pause_t0) >= self.greet_pause:
-                    if self.greet_spin_enabled:
-                        self._greet_spin_duration = abs(self.greet_spin_degrees) / max(1e-3, abs(self.greet_spin_deg_s))
-                        self.get_logger().info(f"인사 상승 완료 → 제자리 회전 시작 ({self._greet_spin_duration:.2f}s)")
-                        self._request_pause(Phase.GREET_SPIN, note="after GREET_UP")
-                        return
+            if (now - self.phase_t0) > self.greet_pause:
+                if self.greet_spin_enabled:
+                    self.get_logger().info("인사 완료 → 제자리 회전 준비")
+                    self.phase = Phase.GREET_SPIN
+                    self.phase_t0 = now
+                else:
+                    if self.stop_after == "greet":
+                        self.get_logger().info("인사 완료 (stop_after=greet) → 착륙")
+                        self._begin_landing(reason="stop_after=greet")
                     else:
-                        if self.stop_after == "greet":
-                            self.get_logger().info("인사 완료 (stop_after=greet) → 착륙")
-                            self._begin_landing(reason="stop_after=greet")
-                            return
-                        self.get_logger().info("인사 완료 → 회피1")
-                        self._request_pause(Phase.AVOID, note="after GREET_UP (no spin)")
-                        return
+                        self.get_logger().info("인사 완료 → 회피1(대각)")
+                        self.phase = Phase.AVOID
+                        self.phase_t0 = now
             return
 
         if self.phase == Phase.GREET_SPIN:
+            # 회전 지속시간 계산
+            spin_duration = abs(self.greet_spin_degrees) / max(1e-3, abs(self.greet_spin_deg_s))
             yaw_rate_rad = math.radians(self.greet_spin_deg_s)
-            self._publish_hover(0.0, 0.0, self._z_hold, yaw_rate_rad)
-            if (now - self.phase_t0) >= self._greet_spin_duration:
-                # 회전 종료(yaw 0) 후 다음 단계
-                self._publish_hover(0.0, 0.0, self._z_hold, 0.0)
+            # 지속적으로 yaw rate 전송
+            self._publish_hover(0.0, 0.0, self._hold_z(), yaw_rate_rad)
+            if (now - self.phase_t0) >= spin_duration:
+                # 회전 종료 시 yaw rate 0으로 한번 보내줌
+                self._publish_hover(0.0, 0.0, self._hold_z(), 0.0)
                 if self.stop_after == "greet":
-                    self.get_logger().info("제자리 회전 완료 (stop_after=greet) → 착륙")
+                    self.get_logger().info("회전 완료 (stop_after=greet) → 착륙")
                     self._begin_landing(reason="stop_after=greet_after_spin")
-                    return
-                self.get_logger().info("제자리 회전 완료 → 회피1")
-                self._request_pause(Phase.AVOID, note="after GREET_SPIN")
-                return
+                else:
+                    self.get_logger().info("회전 완료 → 회피1(대각)")
+                    self.phase = Phase.AVOID
+                    self.phase_t0 = now
             return
 
         if self.phase == Phase.AVOID:
             vx = self.v_avoid_fwd
             vy = self.v_avoid_lat * float(self.avoid_dir)
-            self._publish_hover(vx, vy, self._z_hold, 0.0)
+            self._publish_hover(vx, vy, self._hold_z(), 0.0)
             if (now - self.phase_t0) > self.avoid_time:
                 if self.stop_after == "avoid":
                     self.get_logger().info("회피1 완료 (stop_after=avoid) → 착륙")
                     self._begin_landing(reason="stop_after=avoid")
-                    return
-                self.get_logger().info("회피1 완료 → 전진2")
-                self._request_pause(Phase.FORWARD2, note="after AVOID")
-                return
+                else:
+                    self.get_logger().info("회피1 완료 → 전진2")
+                    self.phase = Phase.FORWARD2
+                    self.phase_t0 = now
             return
 
         if self.phase == Phase.FORWARD2:
-            self._publish_hover(self.v_forward, 0.0, self._z_hold, 0.0)
+            self._publish_hover(self.v_forward, 0.0, self._hold_z(), 0.0)
             if (now - self.phase_t0) > self.forward2_time:
-                self.get_logger().info("전진2 완료 → 회피2")
-                self._request_pause(Phase.AVOID2, note="after FORWARD2")
-                return
+                self.get_logger().info("전진2 완료 → 회피2(반대방향 대각)")
+                self.phase = Phase.AVOID2
+                self.phase_t0 = now
             return
 
         if self.phase == Phase.AVOID2:
             vx = self.v_avoid_fwd
             vy = - self.v_avoid_lat * float(self.avoid_dir)
-            self._publish_hover(vx, vy, self._z_hold, 0.0)
+            self._publish_hover(vx, vy, self._hold_z(), 0.0)
             if (now - self.phase_t0) > self.avoid_time:
                 self.get_logger().info("회피2 완료 → 전진3")
-                self._request_pause(Phase.FORWARD3, note="after AVOID2")
-                return
+                self.phase = Phase.FORWARD3
+                self.phase_t0 = now
             return
 
         if self.phase == Phase.FORWARD3:
-            self._publish_hover(self.v_forward, 0.0, self._z_hold, 0.0)
+            self._publish_hover(self.v_forward, 0.0, self._hold_z(), 0.0)
             if (now - self.phase_t0) > self.forward3_time:
                 self.get_logger().info("전진3 완료 → 착륙")
                 self._begin_landing(reason="sequence_end(full)")
-                return
             return
 
         if self.phase == Phase.LAND:
-            # LAND 단계: HL land + hover(0,0,z_hold,yaw0) 주기적 재전송
-            # Hover는 이 단계에서 최대한 '정지'로 유지(수평속도 0, 고도는 현재값 유지)
-            self._publish_hover(0.0, 0.0, self._z_hold, 0.0)
-
-            if (now - self._last_land_send) >= self._land_interval:
-                self._publish_land(0.0)
-                self._last_land_send = now
-
-            if self.odom is not None and self.alt_current <= self.land_alt_thresh:
-                self.get_logger().info("착륙 완료. 동작 종료")
-                self.phase = Phase.DONE
-                self.phase_t0 = now
-                # 옵션: 종료 서비스 호출(있으면)
-                if self.cli_stop.service_is_ready():
-                    try:
-                        self.cli_stop.call_async(Trigger.Request())
-                    except Exception:
-                        pass
-                return
+            # LAND는 _land_retry_tick이 처리
             return
 
         if self.phase in (Phase.DONE, Phase.ABORT):
-            # 안전 유지
-            self._publish_hover(0.0, 0.0, max(self._z_min, self._z_hold), 0.0)
+            if (now - self.phase_t0) > 2.0 and self.cli_stop.service_is_ready():
+                try:
+                    self.cli_stop.call_async(Trigger.Request())
+                except Exception:
+                    pass
             return
 
 

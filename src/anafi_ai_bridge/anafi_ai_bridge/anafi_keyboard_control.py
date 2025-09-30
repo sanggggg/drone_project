@@ -277,7 +277,7 @@ class AnafiKeyboard(Node):
                 elif ch == 'k':
                     self._call_trigger(self.cli_halt, 'halt')
                 elif ch == 'o':
-                    self._set_offboard(!self.offboard_enabled if False else (not self.offboard_enabled))
+                    self._set_offboard(self.offboard_enabled if False else (not self.offboard_enabled))
                 elif ch == 'z':
                     self.inc_roll = max(0.1, self.inc_roll * 0.8)
                     self.inc_pitch = max(0.1, self.inc_pitch * 0.8)
