@@ -124,6 +124,9 @@ class Anafi(Node):
 		self.pub_steady = self.node.create_publisher(Bool, 'drone/steady', qos_profile_sensor_data)
 		self.pub_battery_health = self.node.create_publisher(UInt8, 'battery/health', qos_profile)
 
+		self.pub_moveby_done = self.node.create_publisher(Bool, 'drone/moveby_done', qos_profile_services_default)
+
+
 		# Services
 		self.node.create_service(SetBool, 'drone/hand_launch', self.hand_launch_callback)
 		self.node.create_service(Trigger, 'drone/takeoff', self.takeoff_callback)
@@ -1367,7 +1370,7 @@ class Anafi(Node):
 			timestampAndSeqNum=0))
 
 	def moveBy_callback(self, msg):		
-		self.drone(move.extended_move_by( # https://developer.parrot.com/docs/olympe/arsdkng_move.html?#olympe.messages.move.extended_move_by
+		result = self.drone(move.extended_move_by( # https://developer.parrot.com/docs/olympe/arsdkng_move.html?#olympe.messages.move.extended_move_by
 			d_x=msg.dx, # displacement along the front axis (m)
 			d_y=msg.dy, # displacement along the right axis (m)
 			d_z=msg.dz, # displacement along the down axis (m)
@@ -1376,6 +1379,11 @@ class Anafi(Node):
 			max_vertical_speed=self.max_vertical_speed,
 			max_yaw_rotation_speed=self.max_yaw_rate
 		)).wait()
+
+		ok = result.success()
+		done = Bool()
+		done.data = bool(ok)
+		self.pub_moveby_done.publish(done)
 	
 	def moveTo_callback(self, msg):		
 		self.drone(move.extended_move_to( # https://developer.parrot.com/docs/olympe/arsdkng_move.html?#olympe.messages.move.extended_move_to

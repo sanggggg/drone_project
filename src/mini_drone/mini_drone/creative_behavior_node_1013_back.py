@@ -87,7 +87,7 @@ class CreativeBehaviorNode(Node):
         self.declare_parameter("forward_speed_mps", 0.3)
         self.declare_parameter("forward1_time_s", 1.0)
         self.declare_parameter("forward2_time_s", 3.0)
-        self.declare_parameter("forward3_time_s", 6.0)
+        self.declare_parameter("forward3_time_s", 3.0)
 
         # 인사(하강/상승 + 회전)
         self.declare_parameter("greet_delta_z_m", 0.10)   # ★ 10cm
@@ -117,7 +117,7 @@ class CreativeBehaviorNode(Node):
         # 착륙 신뢰성
         self.declare_parameter("land_retry_s", 3.0)
         self.declare_parameter("land_repeat_hz", 5.0)
-        self.declare_parameter("land_alt_thresh_m", 0.2)
+        self.declare_parameter("land_alt_thresh_m", 0.1)
 
         # ---------- robust param getters ----------
         def _get_double(name: str, default: float) -> float:
@@ -185,7 +185,7 @@ class CreativeBehaviorNode(Node):
 
         self.land_retry_s = _get_double("land_retry_s", 3.0)
         self.land_repeat_hz = _get_double("land_repeat_hz", 5.0)
-        self.land_alt_thresh = _get_double("land_alt_thresh_m", 0.2)
+        self.land_alt_thresh = _get_double("land_alt_thresh_m", 0.1)
 
         # ---------- QoS ----------
         qos_ctrl = _qos_ctrl()

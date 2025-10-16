@@ -61,6 +61,8 @@ class ControlManager:
         self.spin_duration_s = float(get_or_declare('spin_duration_s', 3.0))
         self.square_turn_rate_deg_s = float(get_or_declare('square_turn_rate_deg_s', 90.0))
 
+        self._hl_active_until = 0.0
+
         # 파라미터 변경 콜백
         self.node.add_on_set_parameters_callback(self._on_set_params)
 
@@ -268,6 +270,9 @@ class ControlManager:
             self._last_hover_time = self.node.get_clock().now().nanoseconds * 1e-9
 
     def _hover_tick(self):
+        if time.time() < getattr(self, "_hl_active_until", 0.0):
+            self._send_notify_stop()
+            return
         with self._lock:
             cf = self.cf
             cmd = self._last_hover
@@ -323,7 +328,14 @@ class ControlManager:
     def _on_hl_land(self, msg: Float32):
         if not self._enable_hl():
             return
+        
+        with self._lock:
+            self._last_hover = None
+            self._last_hover_time = 0.0
+
         self._hl_land(float(msg.data), float(self.hl_durations['land']))
+        import time
+        self._hl_active_until = time.time() + float(self.hl_durations['land']) + 0.5
 
     def _on_hl_goto(self, msg: PoseStamped):
         if not self._enable_hl():

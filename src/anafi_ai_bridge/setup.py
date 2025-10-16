@@ -37,6 +37,7 @@ setup(
             'apriltag_debug_overlay = anafi_ai_bridge.apriltag_debug_overlay:main',
             'anafi_keyboard_control = anafi_ai_bridge.anafi_keyboard_control:main',
             'anafi_follow_cf_commands = anafi_ai_bridge.anafi_follow_cf_commands:main',
+            'anafi_test_flight = anafi_ai_bridge.anafi_test_flight:main',
         ],
     },
 )
