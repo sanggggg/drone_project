@@ -69,7 +69,7 @@ def main():
     node = rclpy.create_node('ai_deck_camera')
 
     # ---- Params ----
-    host = node.declare_parameter('host', '192.168.0.5').value # default: 192.168.4.1, station: 192.168.0.145
+    host = node.declare_parameter('host', '192.168.4.1').value # default: 192.168.4.1, station: 192.168.0.145
     port = int(node.declare_parameter('port', 5000).value)
     bind_ip = node.declare_parameter('bind_ip', '').value
     frame_id = node.declare_parameter('frame_id', 'camera_optical_frame').value
