@@ -14,7 +14,7 @@ from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 
 from nav_msgs.msg import Odometry
-from sensor_msgs.msg import BatteryState, CompressedImage
+from sensor_msgs.msg import BatteryState, CompressedImage, Image
 from geometry_msgs.msg import PoseStamped
 from std_srvs.srv import Trigger
 from std_msgs.msg import Float32
@@ -33,7 +33,7 @@ class CfKeyboardTeleop(Node):
     Crazyflie 2.1+ 키보드 컨트롤러 노드
 
     - /cf/odom, /cf/battery 를 subscribe 해서 상태 출력
-    - /camera/image/compressed 를 subscribe 해서 카메라 FPS 집계
+    - /camera/image 를 subscribe 해서 카메라 FPS 집계
     - /cf/hl/goto (PoseStamped) 로 목표 위치/자세 명령 publish
     - /cf/hl/takeoff, /cf/hl/land 이륙/착륙 publish
     - /cf/stop (Trigger) 서비스 호출
@@ -99,9 +99,9 @@ class CfKeyboardTeleop(Node):
         self.sub_batt = self.create_subscription(
             BatteryState, '/cf/battery', self._battery_cb, qos
         )
-        # ai_deck_camera_node.py 가 publish 하는 압축 영상
+        # ai_deck_camera_node.py 가 publish 하는 영상
         self.sub_cam = self.create_subscription(
-            CompressedImage, '/camera/image/compressed', self._cam_cb, cam_qos
+            Image, '/camera/image', self._cam_cb, cam_qos
         )
 
         # ---- Publisher (goto) ----
@@ -141,7 +141,7 @@ class CfKeyboardTeleop(Node):
         with self._lock:
             self._battery_v = msg.voltage
 
-    def _cam_cb(self, msg: CompressedImage):
+    def _cam_cb(self, msg: Image):
         # 단순히 카운트만 증가 (FPS 계산용)
         with self._lock:
             self._cam_frame_count += 1
@@ -182,7 +182,7 @@ class CfKeyboardTeleop(Node):
         if v is not None:
             self.get_logger().info(f'Battery: {v:.2f} V')
         # 카메라 스트림 상태
-        self.get_logger().info(f'Camera FPS (approx): {cam_fps:.2f} Hz')
+        # self.get_logger().info(f'Camera FPS (approx): {cam_fps:.2f} Hz')
 
     def _send_goto(self, target_x, target_y, target_z, target_yaw):
         msg = PoseStamped()
