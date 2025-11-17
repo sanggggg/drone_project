@@ -1,6 +1,6 @@
 from setuptools import find_packages, setup
 
-package_name = 'mini_drone'
+package_name = 'anafi_ai'
 
 setup(
     name=package_name,
@@ -10,20 +10,19 @@ setup(
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
-        ('share/' + package_name + '/launch', ['launch/crazyflie_bridge.launch.py']),
+        # ('share/' + package_name + '/launch', ['launch/anafi_bridge.launch.py']),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
     maintainer='rubis',
-    maintainer_email='rubis@todo.todo',
+    maintainer_email='dlghdydwkd79@gmail.com',
     description='TODO: Package description',
-    license='Apache-2.0',
-    # tests_require=['pytest'],
+    license='TODO: License declaration',
+    tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'ai_deck_camera = mini_drone.ai_deck_camera_node:main',
-            'cf_bridge = mini_drone.cf_bridge_node:main',
-            'new_cf_keyboard_control_node = mini_drone.new_cf_keyboard_control_node:main',
+            'anafi_keyboard_control = anafi_ai.anafi_keyboard_control:main',
+            'new_anafi_keyboard_control = anafi_ai.new_anafi_keyboard_control:main',
         ],
     },
 )
