@@ -22,7 +22,6 @@ setup(
     entry_points={
         'console_scripts': [
             'anafi_keyboard_control = anafi_ai.anafi_keyboard_control:main',
-            'new_anafi_keyboard_control = anafi_ai.new_anafi_keyboard_control:main',
         ],
     },
 )
