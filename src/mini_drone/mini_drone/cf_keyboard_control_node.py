@@ -14,9 +14,10 @@ from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 
 from nav_msgs.msg import Odometry
-from sensor_msgs.msg import BatteryState
+from sensor_msgs.msg import BatteryState, CompressedImage
 from geometry_msgs.msg import PoseStamped
 from std_srvs.srv import Trigger
+from std_msgs.msg import Float32
 
 
 def quat_to_yaw(qx, qy, qz, qw):
@@ -32,8 +33,10 @@ class CfKeyboardTeleop(Node):
     Crazyflie 2.1+ 키보드 컨트롤러 노드
 
     - /cf/odom, /cf/battery 를 subscribe 해서 상태 출력
+    - /camera/image/compressed 를 subscribe 해서 카메라 FPS 집계
     - /cf/hl/goto (PoseStamped) 로 목표 위치/자세 명령 publish
-    - /cf/hl/takeoff, /cf/hl/land, /cf/emergency_stop (Trigger) 서비스 호출
+    - /cf/hl/takeoff, /cf/hl/land 이륙/착륙 publish
+    - /cf/stop (Trigger) 서비스 호출
 
     기본 키 매핑:
       t: takeoff
@@ -64,9 +67,17 @@ class CfKeyboardTeleop(Node):
         self.base_frame = self.get_parameter('base_frame').value
 
         # ---- QoS ----
+        qos_ctrl = QoSProfile(depth=10)
+        qos_ctrl.reliability = ReliabilityPolicy.RELIABLE
+        qos_ctrl.history = HistoryPolicy.KEEP_LAST
+
         qos = QoSProfile(depth=10)
         qos.reliability = ReliabilityPolicy.BEST_EFFORT
         qos.history = HistoryPolicy.KEEP_LAST
+
+        cam_qos = QoSProfile(depth=1)
+        cam_qos.reliability = ReliabilityPolicy.BEST_EFFORT
+        cam_qos.history = HistoryPolicy.KEEP_LAST
 
         # ---- State ----
         self._lock = threading.Lock()
@@ -77,6 +88,10 @@ class CfKeyboardTeleop(Node):
         self._yaw = 0.0
         self._battery_v = None
 
+        # 카메라 상태 (FPS 계산용)
+        self._cam_frame_count = 0
+        self._cam_last_report_t = time.monotonic()
+
         # ---- Subscriptions ----
         self.sub_odom = self.create_subscription(
             Odometry, '/cf/odom', self._odom_cb, qos
@@ -84,14 +99,18 @@ class CfKeyboardTeleop(Node):
         self.sub_batt = self.create_subscription(
             BatteryState, '/cf/battery', self._battery_cb, qos
         )
+        # ai_deck_camera_node.py 가 publish 하는 압축 영상
+        self.sub_cam = self.create_subscription(
+            CompressedImage, '/camera/image/compressed', self._cam_cb, cam_qos
+        )
 
         # ---- Publisher (goto) ----
-        self.pub_goto = self.create_publisher(PoseStamped, '/cf/hl/goto', qos)
+        self.pub_goto    = self.create_publisher(PoseStamped, '/cf/hl/goto', qos_ctrl)
+        self.pub_takeoff = self.create_publisher(Float32, '/cf/hl/takeoff', qos_ctrl)
+        self.pub_land    = self.create_publisher(Float32, '/cf/hl/land', qos_ctrl)
 
         # ---- Service clients ----
-        self.cli_takeoff = self.create_client(Trigger, '/cf/hl/takeoff')
-        self.cli_land = self.create_client(Trigger, '/cf/hl/land')
-        self.cli_emerg = self.create_client(Trigger, '/cf/emergency_stop')
+        self.cli_emerg = self.create_client(Trigger, '/cf/stop')
 
         # 서비스가 올라왔는지 확인 (논블로킹으로 몇 번만 로그)
         self._check_services_once()
@@ -122,12 +141,17 @@ class CfKeyboardTeleop(Node):
         with self._lock:
             self._battery_v = msg.voltage
 
+    def _cam_cb(self, msg: CompressedImage):
+        # 단순히 카운트만 증가 (FPS 계산용)
+        with self._lock:
+            self._cam_frame_count += 1
+
     # ---------- Helpers ----------
     def _check_services_once(self):
         # 0초 타임아웃으로 즉시 확인만 하고, 결과는 로그로만 남김
         for name, cli in [
-            ('/cf/hl/takeoff', self.cli_takeoff),
-            ('/cf/hl/land', self.cli_land),
+            # ('/cf/hl/takeoff', self.cli_takeoff),
+            # ('/cf/hl/land', self.cli_land),
             ('/cf/emergency_stop', self.cli_emerg),
         ]:
             if not cli.service_is_ready():
@@ -138,12 +162,27 @@ class CfKeyboardTeleop(Node):
             have_odom = self._have_odom
             x, y, z, yaw = self._x, self._y, self._z, self._yaw
             v = self._battery_v
+
+            # 카메라 FPS 계산
+            now = time.monotonic()
+            dt = now - self._cam_last_report_t
+            cam_frames = self._cam_frame_count
+            if dt > 0.0:
+                cam_fps = cam_frames / dt
+            else:
+                cam_fps = 0.0
+            # 다음 윈도우를 위해 리셋
+            self._cam_frame_count = 0
+            self._cam_last_report_t = now
+
         if have_odom:
             self.get_logger().info(
                 f'POS (map): x={x:.2f} y={y:.2f} z={z:.2f} yaw={math.degrees(yaw):.1f} deg'
             )
         if v is not None:
             self.get_logger().info(f'Battery: {v:.2f} V')
+        # 카메라 스트림 상태
+        self.get_logger().info(f'Camera FPS (approx): {cam_fps:.2f} Hz')
 
     def _send_goto(self, target_x, target_y, target_z, target_yaw):
         msg = PoseStamped()
@@ -223,12 +262,16 @@ class CfKeyboardTeleop(Node):
 
         if key == 't':
             self.get_logger().info('[KEY] Takeoff')
-            self._call_trigger_async(self.cli_takeoff, '/cf/hl/takeoff')
+            msg = Float32()
+            msg.data = 0.4  # 원하는 takeoff 높이(m)
+            self.pub_takeoff.publish(msg)
             return
 
         if key == 'l':
             self.get_logger().info('[KEY] Land')
-            self._call_trigger_async(self.cli_land, '/cf/hl/land')
+            msg = Float32()
+            msg.data = 0.0
+            self.pub_land.publish(msg)
             return
 
         if key == ' ':

@@ -32,7 +32,6 @@
 #   l : 착륙
 #   h : RTH
 #   k : HALT (강제 정지)
-#   p : 즉시 호버(=HALT와 동일 동작 호출)
 #   o : skycontroller/offboard 토글
 #   z/x : linear/yaw step 크기 ↓/↑
 #   ? : 도움말
@@ -74,7 +73,6 @@ Anafi AI MoveBy Keyboard Controller
   l : 착륙 (/anafi/drone/land)
   h : 귀환 (/anafi/drone/rth)
   k : HALT 강제 정지 (/anafi/drone/halt)
-  p : 즉시 호버(=HALT 호출)
   o : offboard 토글 (/anafi/skycontroller/offboard)
   ? : 이 도움말 출력
 
@@ -333,9 +331,6 @@ class AnafiMoveByKeyboard(Node):
             self._call_trigger_async(self.cli_rth, 'rth')
         elif ch == 'k':
             self.get_logger().warning("[키보드] HALT 강제 정지 요청 (k)")
-            self._call_trigger_async(self.cli_halt, 'halt')
-        elif ch == 'p':
-            self.get_logger().warning("[키보드] 즉시 호버(=HALT) 요청 (p)")
             self._call_trigger_async(self.cli_halt, 'halt')
         elif ch == 'o':
             self.get_logger().warning("[키보드] offboard 토글 요청 (o)")
