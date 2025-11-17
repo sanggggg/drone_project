@@ -287,11 +287,11 @@ class AnafiMoveByKeyboard(Node):
             # 후진 (-dx)
             self._publish_moveby(dx=-lin)
         elif ch in ('d', 'D'):
-            # 오른쪽 (dy<0 로 사용, TestFlight 예제에 맞춰)
-            self._publish_moveby(dy=-lin)
-        elif ch in ('a', 'A'):
-            # 왼쪽 (dy>0)
+            # 오른쪽 (dy>0 로 사용, TestFlight 예제에 맞춰)
             self._publish_moveby(dy=lin)
+        elif ch in ('a', 'A'):
+            # 왼쪽 (dy<0)
+            self._publish_moveby(dy=-lin)
         elif ch in ('r', 'R'):
             # 위로 (dz<0, down axis 기준)
             self._publish_moveby(dz=-lin)
