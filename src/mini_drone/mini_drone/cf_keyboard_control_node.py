@@ -274,6 +274,7 @@ class CfKeyboardTeleop(Node):
 
         if key == 'l':
             self.get_logger().info('[KEY] Land')
+            self._seq_stop_event.set() # 시퀀스 루프 탈출 신호
             msg = Float32()
             msg.data = 0.0
             self.pub_land.publish(msg)
@@ -281,14 +282,28 @@ class CfKeyboardTeleop(Node):
 
         if key == ' ':
             self.get_logger().warn('[KEY] EMERGENCY STOP')
+            self._seq_stop_event.set() # 시퀀스 루프 탈출 신호
             self._call_trigger_async(self.cli_emerg, '/cf/emergency_stop')
             return
 
-        if key == 'c':
-            self.get_logger().info('[KEY] Starting Custom Sequence')
+        if key == '0':
+            self.get_logger().info('[KEY] Stop Sequence')
+            self._seq_stop_event.set() # 시퀀스 루프 탈출 신호
+            self._call_trigger_async(self.cli_pattern_stop, '/cf/pattern/stop')
+            return
+
+        if key == '1':
+            self.get_logger().info('[KEY] Starting Custom Sequence Square')
             self._call_trigger_async(self.cli_pattern_stop, '/cf/pattern/stop')
             self._seq_stop_event.clear()
-            threading.Thread(target=self._run_custom_sequence, daemon=True).start()
+            threading.Thread(target=self._run_custom_sequence_square, daemon=True).start()
+            return
+
+        if key == '2':
+            self.get_logger().info('[KEY] Starting Custom Sequence Circle')
+            self._call_trigger_async(self.cli_pattern_stop, '/cf/pattern/stop')
+            self._seq_stop_event.clear()
+            threading.Thread(target=self._run_custom_sequence_circle, daemon=True).start()
             return
 
         # 위치 기반 명령은 odom 있어야 함
@@ -350,7 +365,7 @@ class CfKeyboardTeleop(Node):
 
         self._send_goto(target_x, target_y, target_z, target_yaw)
     
-    def _run_custom_sequence(self):
+    def _run_custom_sequence_square(self):
         self._seq_running = True
         
         # 헬퍼: 호버 명령 전송 (vx, vy, yaw_rate_deg, z)
@@ -389,14 +404,18 @@ class CfKeyboardTeleop(Node):
             # 3. Circle 1 (Forward + Yaw)
             self.get_logger().info("[SEQ] Circle Left")
             for _ in range(50):
-                if self._seq_stop_event.is_set(): break
+                if self._seq_stop_event.is_set(): 
+                    pub_hover(0, 0, 0, 0.4)
+                    break
                 pub_hover(0.5, 0, 36 * 2, 0.4)
                 time.sleep(0.1)
 
             # 4. Circle 2 (Forward + Negative Yaw)
             self.get_logger().info("[SEQ] Circle Right")
             for _ in range(50):
-                if self._seq_stop_event.is_set(): break
+                if self._seq_stop_event.is_set(): 
+                    pub_hover(0, 0, 0, 0.4)
+                    break
                 pub_hover(0.5, 0, -36 * 2, 0.4)
                 time.sleep(0.1)
 
@@ -425,6 +444,74 @@ class CfKeyboardTeleop(Node):
         finally:
             self._seq_running = False
 
+    def _run_custom_sequence_circle(self):
+        """이륙 -> 원 그리기(좌회전) -> 착륙 시퀀스"""
+        self._seq_running = True
+        
+        # 헬퍼: 호버 명령 전송 (vx, vy, yaw_rate_deg, z)
+        def pub_hover(vx, vy, yaw_rate_deg, z):
+            if self._seq_stop_event.is_set():
+                return
+            msg = TwistStamped()
+            msg.header.stamp = self.get_clock().now().to_msg()
+            msg.twist.linear.x = float(vx)
+            msg.twist.linear.y = float(vy)
+            msg.twist.linear.z = float(z) # 절대 고도
+            msg.twist.angular.z = math.radians(float(yaw_rate_deg)) # deg/s -> rad/s 변환
+            self.pub_cmd_hover.publish(msg)
+
+        try:
+            self.get_logger().info("[SEQ] Starting Circle Sequence...")
+            
+            # 1. Ramp up (이륙 시뮬레이션: 0 -> 0.4m, 1초)
+            self.get_logger().info("[SEQ] Ramp up")
+            for y in range(10):
+                if self._seq_stop_event.is_set(): break
+                pub_hover(0, 0, 0, y / 25.0)
+                time.sleep(0.1)
+
+            # 2. Hover stable (안정화: 2초)
+            self.get_logger().info("[SEQ] Hover stable")
+            for _ in range(20):
+                if self._seq_stop_event.is_set(): break
+                pub_hover(0, 0, 0, 0.4)
+                time.sleep(0.1)
+
+            # 3. Draw Circle (원 그리기: 5초)
+            # 속도 0.5 m/s, 회전각속도 72 deg/s
+            # (360도 도는 데 5초 걸림 -> 50 * 0.1s = 5초 딱 맞음)
+            self.get_logger().info("[SEQ] Drawing Circle (Left)")
+            for _ in range(50):
+                if self._seq_stop_event.is_set(): 
+                    pub_hover(0, 0, 0, 0.4) 
+                    break
+                # vx=0.5로 전진하면서, yaw=72로 회전 = 원 운동
+                pub_hover(0.5, 0, 72.0, 0.4) 
+                time.sleep(0.1)
+
+            # 4. Hover stable (회전 후 안정화: 2초)
+            self.get_logger().info("[SEQ] Hover stable")
+            for _ in range(20):
+                if self._seq_stop_event.is_set(): break
+                pub_hover(0, 0, 0, 0.4)
+                time.sleep(0.1)
+
+            # 5. Ramp down (착륙 시뮬레이션: 0.4 -> 0m, 1초)
+            self.get_logger().info("[SEQ] Ramp down")
+            for y in range(10):
+                if self._seq_stop_event.is_set(): break
+                pub_hover(0, 0, 0, (10 - y) / 25.0)
+                time.sleep(0.1)
+            
+            # 6. Stop (패턴 종료 알림)
+            self._call_trigger_async(self.cli_pattern_stop, '/cf/pattern/stop')
+            self.get_logger().info("[SEQ] Done")
+
+        except Exception as e:
+            self.get_logger().error(f"[SEQ] Error: {e}")
+        finally:
+            self._seq_running = False
+
     def _print_help(self):
         msg = """
 ===== Crazyflie Keyboard Teleop =====
@@ -438,7 +525,10 @@ r/f     : up/down      (step_z_m)
 q/e     : yaw left/right (step_yaw_deg)
 
 x       : hover (goto current pose)
-c       : custom sequence
+
+0       : stop sequence
+1       : custom sequence square
+2       : custom sequence circle
 
 h       : show this help
 Ctrl+C  : exit
