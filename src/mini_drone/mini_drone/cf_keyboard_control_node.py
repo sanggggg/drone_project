@@ -18,7 +18,7 @@ from sensor_msgs.msg import BatteryState, CompressedImage, Image
 from geometry_msgs.msg import PoseStamped
 from std_srvs.srv import Trigger
 from std_msgs.msg import Float32
-
+from geometry_msgs.msg import PoseStamped, TwistStamped
 
 def quat_to_yaw(qx, qy, qz, qw):
     """Quaternion -> yaw (rad)"""
@@ -108,15 +108,20 @@ class CfKeyboardTeleop(Node):
         self.pub_goto    = self.create_publisher(PoseStamped, '/cf/hl/goto', qos_ctrl)
         self.pub_takeoff = self.create_publisher(Float32, '/cf/hl/takeoff', qos_ctrl)
         self.pub_land    = self.create_publisher(Float32, '/cf/hl/land', qos_ctrl)
+        self.pub_cmd_hover = self.create_publisher(TwistStamped, '/cf/cmd_hover', qos_ctrl)  
 
         # ---- Service clients ----
         self.cli_emerg = self.create_client(Trigger, '/cf/stop')
+        self.cli_pattern_stop = self.create_client(Trigger, '/cf/pattern/stop')
 
         # 서비스가 올라왔는지 확인 (논블로킹으로 몇 번만 로그)
         self._check_services_once()
 
         # ---- Status 타이머 ----
         self.create_timer(1.0, self._status_timer)
+
+        self._seq_running = False
+        self._seq_stop_event = threading.Event()
 
         # ---- 키보드 스레드 ----
         self._key_thread = threading.Thread(target=self._keyboard_loop, daemon=True)
@@ -279,6 +284,13 @@ class CfKeyboardTeleop(Node):
             self._call_trigger_async(self.cli_emerg, '/cf/emergency_stop')
             return
 
+        if key == 'c':
+            self.get_logger().info('[KEY] Starting Custom Sequence')
+            self._call_trigger_async(self.cli_pattern_stop, '/cf/pattern/stop')
+            self._seq_stop_event.clear()
+            threading.Thread(target=self._run_custom_sequence, daemon=True).start()
+            return
+
         # 위치 기반 명령은 odom 있어야 함
         with self._lock:
             if not self._have_odom:
@@ -337,6 +349,81 @@ class CfKeyboardTeleop(Node):
         target_z = max(0.0, min(2.0, target_z))
 
         self._send_goto(target_x, target_y, target_z, target_yaw)
+    
+    def _run_custom_sequence(self):
+        self._seq_running = True
+        
+        # 헬퍼: 호버 명령 전송 (vx, vy, yaw_rate_deg, z)
+        # Bridge 노드가 yaw_rate를 deg/s로 변환하므로, 여기선 ROS 표준인 rad/s로 보내야 함
+        def pub_hover(vx, vy, yaw_rate_deg, z):
+            if self._seq_stop_event.is_set():
+                return
+            msg = TwistStamped()
+            msg.header.stamp = self.get_clock().now().to_msg()
+            msg.twist.linear.x = float(vx)
+            msg.twist.linear.y = float(vy)
+            msg.twist.linear.z = float(z) # 절대 고도
+            msg.twist.angular.z = math.radians(float(yaw_rate_deg)) # deg/s -> rad/s 변환
+            self.pub_cmd_hover.publish(msg)
+
+        try:
+            self.get_logger().info("[SEQ] Starting sequence...")
+            
+            # NOTE: reset_estimator, arming은 Bridge 노드 초기화시 처리된다고 가정
+            # 만약 arming이 필요하면 takeoff 전에 처리 필요
+            
+            # 1. Ramp up (Takeoff simulation)
+            self.get_logger().info("[SEQ] Ramp up")
+            for y in range(10):
+                if self._seq_stop_event.is_set(): break
+                pub_hover(0, 0, 0, y / 25.0)
+                time.sleep(0.1)
+
+            # 2. Hover stable
+            self.get_logger().info("[SEQ] Hover stable")
+            for _ in range(20):
+                if self._seq_stop_event.is_set(): break
+                pub_hover(0, 0, 0, 0.4)
+                time.sleep(0.1)
+
+            # 3. Circle 1 (Forward + Yaw)
+            self.get_logger().info("[SEQ] Circle Left")
+            for _ in range(50):
+                if self._seq_stop_event.is_set(): break
+                pub_hover(0.5, 0, 36 * 2, 0.4)
+                time.sleep(0.1)
+
+            # 4. Circle 2 (Forward + Negative Yaw)
+            self.get_logger().info("[SEQ] Circle Right")
+            for _ in range(50):
+                if self._seq_stop_event.is_set(): break
+                pub_hover(0.5, 0, -36 * 2, 0.4)
+                time.sleep(0.1)
+
+            # 5. Hover stable
+            self.get_logger().info("[SEQ] Hover stable")
+            for _ in range(20):
+                if self._seq_stop_event.is_set(): break
+                pub_hover(0, 0, 0, 0.4)
+                time.sleep(0.1)
+
+            # 6. Ramp down (Landing)
+            self.get_logger().info("[SEQ] Ramp down")
+            for y in range(10):
+                if self._seq_stop_event.is_set(): break
+                pub_hover(0, 0, 0, (10 - y) / 25.0)
+                time.sleep(0.1)
+            
+            # 7. Stop (Notify Bridge)
+            # Bridge 노드는 hover 명령이 끊기면 자동으로 notify_stop 처리함
+            # 확실히 하기 위해 pattern_stop 호출
+            self._call_trigger_async(self.cli_pattern_stop, '/cf/pattern/stop')
+            self.get_logger().info("[SEQ] Done")
+
+        except Exception as e:
+            self.get_logger().error(f"[SEQ] Error: {e}")
+        finally:
+            self._seq_running = False
 
     def _print_help(self):
         msg = """
@@ -351,6 +438,8 @@ r/f     : up/down      (step_z_m)
 q/e     : yaw left/right (step_yaw_deg)
 
 x       : hover (goto current pose)
+c       : custom sequence
+
 h       : show this help
 Ctrl+C  : exit
 =====================================
