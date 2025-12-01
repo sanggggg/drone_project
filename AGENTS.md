@@ -321,7 +321,7 @@ ros2 launch mini_drone crazyflie_bridge.launch.py
 
 Launches the ANAFI bridge:
 ```bash
-ros2 launch anafi_ros_nodes anafi_launch.py namespace:='anafi' ip:='192.168.53.1' model:='ai'
+ros2 launch anafi_ros_nodes anafi_launch.py
 ```
 
 ---
@@ -393,14 +393,71 @@ Example applications for AI-Deck:
 
 ---
 
-## Development Notes
+## How to Build & Run ROS Nodes
 
-### Building the Project
+### Building
+
+#### Build All Packages (Big Drone - ANAFI)
 ```bash
-cd ~/ros2_ws
-colcon build --packages-select anafi_ros_interfaces anafi_ros_nodes anafi_ai mini_drone
+cd ~/drone_project
+colcon build
 source install/setup.bash
 ```
+
+#### Build Mini Drone Only (Crazyflie)
+```bash
+cd ~/drone_project
+colcon build --packages-select mini_drone
+source install/setup.bash
+```
+
+#### Build Specific Packages
+```bash
+# Build only ANAFI packages
+colcon build --packages-select anafi_ros_interfaces anafi_ros_nodes anafi_ai
+source install/setup.bash
+
+# Build only mini drone package
+colcon build --packages-select mini_drone
+source install/setup.bash
+```
+
+---
+
+### Running - Big Drone (Parrot ANAFI)
+
+#### Terminal 1: Launch ANAFI Bridge
+```bash
+ros2 launch anafi_ros_nodes anafi_launch.py
+```
+
+With custom parameters:
+```bash
+ros2 launch anafi_ros_nodes anafi_launch.py namespace:='anafi' ip:='192.168.53.1' model:='ai'
+```
+
+#### Terminal 2: Keyboard Control
+```bash
+ros2 run anafi_ai anafi_keyboard_control
+```
+
+---
+
+### Running - Mini Drone (Crazyflie)
+
+#### Terminal 1: Launch Crazyflie Bridge
+```bash
+ros2 launch mini_drone crazyflie_bridge.launch.py
+```
+
+#### Terminal 2: Keyboard Control
+```bash
+ros2 run mini_drone cf_keyboard_control_node
+```
+
+---
+
+## Development Notes
 
 ### Code Style
 - **Formatter:** rustfmt (via `cargo fmt`) for any Rust code
@@ -423,25 +480,12 @@ Each actor/module has corresponding test files in `test/` directories.
 
 ---
 
-## Quick Start
+## Quick Reference
 
-### Crazyflie
-```bash
-# Terminal 1: Launch bridge
-ros2 launch mini_drone crazyflie_bridge.launch.py
-
-# Terminal 2: Keyboard control
-ros2 run mini_drone cf_keyboard_control_node
-```
-
-### ANAFI
-```bash
-# Terminal 1: Launch bridge (via SkyController)
-ros2 launch anafi_ros_nodes anafi_launch.py namespace:='anafi' ip:='192.168.53.1' model:='ai'
-
-# Terminal 2: Keyboard control
-ros2 run anafi_ai anafi_keyboard_control
-```
+| Drone | Build Command | Launch Command | Keyboard Control |
+|-------|---------------|----------------|------------------|
+| ANAFI (Big) | `colcon build` | `ros2 launch anafi_ros_nodes anafi_launch.py` | `ros2 run anafi_ai anafi_keyboard_control` |
+| Crazyflie (Mini) | `colcon build --packages-select mini_drone` | `ros2 launch mini_drone crazyflie_bridge.launch.py` | `ros2 run mini_drone cf_keyboard_control_node` |
 
 ---
 
