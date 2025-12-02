@@ -31,6 +31,7 @@ from sensor_msgs.msg import Image, CompressedImage
 from std_msgs.msg import Header, String
 
 import numpy as np
+import pytesseract
 
 try:
     import cv2
@@ -104,8 +105,8 @@ class YoloDetectionNode(Node):
             raise RuntimeError("cv_bridge not available")
 
         # ---------- Parameters ----------
-        self.declare_parameter('model', 'yolov8n.pt')
-        self.declare_parameter('device', '')
+        self.declare_parameter('model', 'yolov8n.engine')
+        self.declare_parameter('device', 'cuda')
         self.declare_parameter('confidence', 0.25)
         self.declare_parameter('inference_rate', 5.0)  # Hz
         self.declare_parameter('publish_compressed', True)
