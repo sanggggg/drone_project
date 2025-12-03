@@ -281,8 +281,10 @@ class CfKeyboardTeleop(Node):
     def _handle_key(self, key: str):
         key = key.lower()
 
+        # 'h' : 홈 포지션 (0, 0, 0.4m, yaw=0) 으로 이동
         if key == 'h':
-            self._print_help()
+            self.get_logger().info('[KEY] Come home → (x=0, y=0, z=0.4, yaw=0deg)')
+            self._send_goto(0.0, 0.0, 0.4, 0.0)
             return
 
         if key == 't':
@@ -385,11 +387,11 @@ w/s     : forward/back (step_xy_m)
 a/d     : left/right   (step_xy_m)
 r/f     : up/down      (step_z_m)
 q/e     : yaw left/right (step_yaw_deg)
+h       : come home (x=0, y=0, z=0.4m, yaw=0deg)
 
 3       : run Figure 8 trajectory
 4       : run Vertical A trajectory
 
-h       : show this help
 Ctrl+C  : exit
 =====================================
 """
