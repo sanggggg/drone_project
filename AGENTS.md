@@ -287,6 +287,107 @@ Terminal-based keyboard teleoperation for Crazyflie using high-level commands.
 
 ---
 
+#### 3.5 `quiz_controller` Node
+**File:** `src/mini_drone/mini_drone/quiz_controller_node.py`  
+**Entry Point:** `quiz_controller = mini_drone.quiz_controller_node:main`
+
+State machine-based quiz demo controller that orchestrates both ANAFI and Crazyflie drones for quiz detection and trajectory drawing.
+
+| Aspect | Details |
+|--------|---------|
+| **Purpose** | Coordinate multi-drone quiz demo (detection + trajectory drawing) |
+| **Control Mode** | State machine with keyboard input |
+| **Drones Controlled** | ANAFI (detection) + Crazyflie (trajectory drawing) |
+
+**State Machine:**
+```
+┌──────────┐      's'        ┌──────────┐      'n'      ┌──────────┐
+│  UNINIT  │ ──────────────► │   IDLE   │ ────────────► │DETECTING │
+│          │   takeoff both  │          │               │          │
+└──────────┘                 └──────────┘               └────┬─────┘
+                                  ▲                          │
+                                  │ 's' + home reached  /quiz/answer
+                                  │                          │
+                             ┌────┴─────┐                    │
+                             │ DRAWING  │◄───────────────────┘
+                             │          │   start trajectory
+                             └────┬─────┘
+                                  │
+     ┌────────────────────────────┼────────────────────────────┐
+     │ 'x' OR 5min timeout        │                            │
+     │ (from IDLE/DETECTING/DRAWING)                           │
+     ▼                            ▼                            ▼
+┌──────────┐
+│  FINISH  │  ◄─────── land both drones ───────────────────────
+│          │
+└──────────┘
+```
+
+**States:**
+| State | Description |
+|-------|-------------|
+| `UNINIT` | Initial state - all drones on ground |
+| `IDLE` | Both drones hovering at home positions |
+| `DETECTING` | ANAFI detecting quiz, waiting for answer |
+| `DRAWING` | Mini drone executing trajectory based on answer |
+| `FINISH` | All drones landed, operation complete |
+
+**Key Mappings:**
+| Key | Action |
+|-----|--------|
+| `s` | Start (UnInit→Idle) / Return home (Drawing→Idle) |
+| `n` | Next - Start detecting (Idle→Detecting) |
+| `x` | Exit - Land and finish |
+| `Ctrl+C` | Force quit |
+
+**Subscribed Topics:**
+| Topic | Type | Description |
+|-------|------|-------------|
+| `/cf/odom` | `Odometry` | Mini drone position/orientation |
+| `/anafi/drone/state` | `String` | ANAFI flight state |
+| `/quiz/answer` | `String` | Detection result (triggers Drawing) |
+
+**Published Topics:**
+| Topic | Type | Description |
+|-------|------|-------------|
+| `/quiz/state` | `String` | Current controller state |
+| `/cf/hl/takeoff` | `Float32` | Mini takeoff command |
+| `/cf/hl/land` | `Float32` | Mini land command |
+| `/cf/hl/goto` | `PoseStamped` | Mini goto position |
+
+**Service Clients:**
+| Service | Type | Description |
+|---------|------|-------------|
+| `/anafi/drone/takeoff` | `Trigger` | ANAFI takeoff |
+| `/anafi/drone/land` | `Trigger` | ANAFI land |
+| `/cf/traj/run` | `RunTrajectory` | Execute Mini trajectory |
+
+**Parameters:**
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `mini_home_x` | 0.0 | Mini home X position (m) |
+| `mini_home_y` | 0.0 | Mini home Y position (m) |
+| `mini_home_z` | 0.4 | Mini home Z position (m) |
+| `mini_home_yaw_deg` | 0.0 | Mini home yaw (deg) |
+| `anafi_home_x` | 0.0 | ANAFI home X position (m) |
+| `anafi_home_y` | 0.0 | ANAFI home Y position (m) |
+| `anafi_home_z` | 0.6 | ANAFI home Z position (m) |
+| `anafi_home_yaw_deg` | 0.0 | ANAFI home yaw (deg) |
+| `takeoff_duration_s` | 2.0 | Takeoff duration (s) |
+| `land_duration_s` | 2.0 | Landing duration (s) |
+| `command_settle_time_s` | 0.2 | Extra wait after duration |
+| `operation_timeout_min` | 5.0 | Auto-finish timeout (min) |
+| `home_position_tolerance_m` | 0.1 | Home position tolerance (m) |
+| `home_yaw_tolerance_deg` | 15.0 | Home yaw tolerance (deg) |
+
+**Answer to Trajectory Mapping:**
+| Answer | Trajectory |
+|--------|------------|
+| `"1"` | `figure8` |
+| `"2"` | `vertical_a` |
+
+---
+
 ## Custom Message Types
 
 ### `anafi_ros_interfaces`
@@ -322,6 +423,33 @@ ros2 launch mini_drone crazyflie_bridge.launch.py
 Launches the ANAFI bridge:
 ```bash
 ros2 launch anafi_ros_nodes anafi_launch.py
+```
+
+### `quiz_demo.launch.py`
+**Location:** `src/mini_drone/launch/`
+
+Launches the complete quiz demo system with both drones:
+```bash
+ros2 launch mini_drone quiz_demo.launch.py
+```
+
+With custom parameters:
+```bash
+ros2 launch mini_drone quiz_demo.launch.py operation_timeout_min:=3.0 mini_home_z:=0.5
+```
+
+**Nodes Started:**
+1. `cf_bridge` - Crazyflie telemetry and control
+2. `ai_deck_camera` - AI-Deck camera streaming
+3. `quiz_controller` - State machine controller (in separate terminal)
+
+**Note:** ANAFI bridge should be launched separately:
+```bash
+# Terminal 1: Launch ANAFI
+ros2 launch anafi_ros_nodes anafi_launch.py namespace:='anafi'
+
+# Terminal 2: Launch Quiz Demo (Crazyflie + Controller)
+ros2 launch mini_drone quiz_demo.launch.py
 ```
 
 ---
@@ -486,6 +614,25 @@ Each actor/module has corresponding test files in `test/` directories.
 |-------|---------------|----------------|------------------|
 | ANAFI (Big) | `colcon build` | `ros2 launch anafi_ros_nodes anafi_launch.py` | `ros2 run anafi_ai anafi_keyboard_control` |
 | Crazyflie (Mini) | `colcon build --packages-select mini_drone` | `ros2 launch mini_drone crazyflie_bridge.launch.py` | `ros2 run mini_drone cf_keyboard_control_node` |
+| **Quiz Demo** | `colcon build --packages-select mini_drone` | `ros2 launch mini_drone quiz_demo.launch.py` | Built-in (s/n/x keys) |
+
+---
+
+### Quiz Demo Quick Start
+
+```bash
+# Terminal 1: Launch ANAFI (namespace required for quiz_controller)
+ros2 launch anafi_ros_nodes anafi_launch.py namespace:='anafi'
+
+# Terminal 2: Launch Quiz Demo
+ros2 launch mini_drone quiz_demo.launch.py
+
+# Quiz Controller will open in a separate terminal (xterm)
+# Controls: [s] Start, [n] Detect, [x] Exit
+
+# To simulate detection result (for testing):
+ros2 topic pub --once /quiz/answer std_msgs/String "data: '1'"
+```
 
 ---
 
