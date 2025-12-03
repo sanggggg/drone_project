@@ -17,6 +17,10 @@ Keyboard Controls:
     's' - UnInit→Idle (시작) / Drawing→Idle (복귀)
     'n' - Idle→Detecting (탐지 시작)
     'x' - 종료 (→Finish)
+    '1'/'2' - (mini_only_mode + DETECTING) 수동 answer 입력
+
+Parameters:
+    mini_only_mode: ANAFI 없이 Mini drone만 테스트하는 모드
 """
 
 import sys
@@ -99,6 +103,9 @@ class QuizControllerNode(Node):
         self.declare_parameter('home_position_tolerance_m', 0.1)
         self.declare_parameter('home_yaw_tolerance_deg', 15.0)
 
+        # Mini only mode (ANAFI 없이 테스트)
+        self.declare_parameter('mini_only_mode', False)
+
         # 파라미터 로드
         self.mini_home_x = float(self.get_parameter('mini_home_x').value)
         self.mini_home_y = float(self.get_parameter('mini_home_y').value)
@@ -117,6 +124,8 @@ class QuizControllerNode(Node):
 
         self.home_pos_tol = float(self.get_parameter('home_position_tolerance_m').value)
         self.home_yaw_tol = math.radians(float(self.get_parameter('home_yaw_tolerance_deg').value))
+
+        self.mini_only_mode = bool(self.get_parameter('mini_only_mode').value)
 
         # Answer → Trajectory 매핑
         self.answer_trajectory_map = {
@@ -166,6 +175,7 @@ class QuizControllerNode(Node):
         self.pub_cf_takeoff = self.create_publisher(Float32, '/cf/hl/takeoff', qos_reliable)
         self.pub_cf_land = self.create_publisher(Float32, '/cf/hl/land', qos_reliable)
         self.pub_cf_goto = self.create_publisher(PoseStamped, '/cf/hl/goto', qos_reliable)
+        self.pub_quiz_answer = self.create_publisher(String, '/quiz/answer', qos_reliable)
 
         # ---- Service Clients ----
         self.cli_anafi_takeoff = self.create_client(Trigger, '/anafi/drone/takeoff')
@@ -182,7 +192,8 @@ class QuizControllerNode(Node):
         self._key_thread.start()
 
         self._print_ui()
-        self.get_logger().info('Quiz Controller initialized. State: UNINIT')
+        mode_str = "[MINI-ONLY MODE]" if self.mini_only_mode else "[DUAL-DRONE MODE]"
+        self.get_logger().info(f'Quiz Controller initialized {mode_str}. State: UNINIT')
 
     # ==================== Callbacks ====================
 
@@ -288,16 +299,19 @@ class QuizControllerNode(Node):
     # ==================== Drone Commands ====================
 
     def _takeoff_both(self):
-        """두 드론 동시 takeoff"""
-        # ANAFI takeoff
-        if self.cli_anafi_takeoff.service_is_ready():
-            req = Trigger.Request()
-            future = self.cli_anafi_takeoff.call_async(req)
-            future.add_done_callback(
-                lambda f: self.get_logger().info(f"ANAFI takeoff: {f.result().message if f.result() else 'failed'}")
-            )
+        """두 드론 동시 takeoff (mini_only_mode면 Mini만)"""
+        # ANAFI takeoff (mini_only_mode가 아닐 때만)
+        if not self.mini_only_mode:
+            if self.cli_anafi_takeoff.service_is_ready():
+                req = Trigger.Request()
+                future = self.cli_anafi_takeoff.call_async(req)
+                future.add_done_callback(
+                    lambda f: self.get_logger().info(f"ANAFI takeoff: {f.result().message if f.result() else 'failed'}")
+                )
+            else:
+                self.get_logger().warn("ANAFI takeoff service not ready")
         else:
-            self.get_logger().warn("ANAFI takeoff service not ready")
+            self.get_logger().info("[MINI-ONLY] Skipping ANAFI takeoff")
 
         # Mini takeoff
         msg = Float32()
@@ -306,16 +320,19 @@ class QuizControllerNode(Node):
         self.get_logger().info(f"Mini takeoff command sent (target z={self.mini_home_z}m)")
 
     def _land_both(self):
-        """두 드론 동시 착륙"""
-        # ANAFI land
-        if self.cli_anafi_land.service_is_ready():
-            req = Trigger.Request()
-            future = self.cli_anafi_land.call_async(req)
-            future.add_done_callback(
-                lambda f: self.get_logger().info(f"ANAFI land: {f.result().message if f.result() else 'failed'}")
-            )
+        """두 드론 동시 착륙 (mini_only_mode면 Mini만)"""
+        # ANAFI land (mini_only_mode가 아닐 때만)
+        if not self.mini_only_mode:
+            if self.cli_anafi_land.service_is_ready():
+                req = Trigger.Request()
+                future = self.cli_anafi_land.call_async(req)
+                future.add_done_callback(
+                    lambda f: self.get_logger().info(f"ANAFI land: {f.result().message if f.result() else 'failed'}")
+                )
+            else:
+                self.get_logger().warn("ANAFI land service not ready")
         else:
-            self.get_logger().warn("ANAFI land service not ready")
+            self.get_logger().info("[MINI-ONLY] Skipping ANAFI land")
 
         # Mini land
         msg = Float32()
@@ -367,8 +384,6 @@ class QuizControllerNode(Node):
 
     def _on_key_press(self, key: str):
         """키 입력 처리"""
-        key = key.lower()
-
         with self._lock:
             current_state = self.state
 
@@ -392,6 +407,13 @@ class QuizControllerNode(Node):
                 else:
                     self.get_logger().debug(f"Key 'x' ignored in state {current_state.name}")
 
+            # mini_only_mode에서 Detecting 상태일 때 '1', '2' 키로 수동 answer 입력
+            elif key in ('1', '2'):
+                if self.mini_only_mode and current_state == QuizState.DETECTING:
+                    self._handle_manual_answer_locked(key)
+                else:
+                    self.get_logger().debug(f"Key '{key}' ignored (mini_only_mode={self.mini_only_mode}, state={current_state.name})")
+
     def _handle_start_locked(self):
         """UnInit → Idle 전환 처리 (lock 보유 상태)"""
         self.get_logger().info("Starting operation: Takeoff both drones...")
@@ -404,7 +426,29 @@ class QuizControllerNode(Node):
     def _handle_start_detecting_locked(self):
         """Idle → Detecting 전환 처리 (lock 보유 상태)"""
         self.state = QuizState.DETECTING
-        self.get_logger().info("Detecting started - waiting for /quiz/answer...")
+        if self.mini_only_mode:
+            self.get_logger().info("Detecting started - press [1] or [2] for manual answer")
+        else:
+            self.get_logger().info("Detecting started - waiting for /quiz/answer...")
+        self._update_ui()
+
+    def _handle_manual_answer_locked(self, answer: str):
+        """mini_only_mode에서 수동 answer 입력 처리 (lock 보유 상태)"""
+        trajectory = self.answer_trajectory_map.get(answer)
+        if trajectory is None:
+            self.get_logger().warn(f"Unknown answer: '{answer}'")
+            return
+
+        self.get_logger().info(f"[MINI-ONLY] Manual answer: '{answer}' → trajectory: '{trajectory}'")
+
+        # /quiz/answer 토픽 발행 (다른 노드가 구독 중일 수 있음)
+        msg = String()
+        msg.data = answer
+        self.pub_quiz_answer.publish(msg)
+
+        # 직접 Drawing 상태로 전환 및 궤적 실행
+        self._run_trajectory(trajectory)
+        self.state = QuizState.DRAWING
         self._update_ui()
 
     def _handle_return_home_locked(self):
@@ -456,9 +500,14 @@ class QuizControllerNode(Node):
 
     def _print_ui(self):
         """터미널 UI 출력"""
-        ui = """
+        mode_header = "MINI-ONLY MODE" if self.mini_only_mode else "QUIZ CONTROLLER"
+        mini_only_controls = """
+║    [1] Answer 1 → figure8 (DETECTING only)                   ║
+║    [2] Answer 2 → vertical_a (DETECTING only)                ║""" if self.mini_only_mode else ""
+
+        ui = f"""
 ╔══════════════════════════════════════════════════════════════╗
-║                      QUIZ CONTROLLER                         ║
+║                      {mode_header:^21}                       ║
 ╠══════════════════════════════════════════════════════════════╣
 ║  State Machine:                                              ║
 ║    UNINIT → IDLE → DETECTING → DRAWING → IDLE → ...         ║
@@ -468,11 +517,11 @@ class QuizControllerNode(Node):
 ║  Controls:                                                   ║
 ║    [s] Start (UnInit→Idle) / Return Home (Drawing→Idle)     ║
 ║    [n] Next - Start Detecting (Idle→Detecting)              ║
-║    [x] Exit - Land and Finish                                ║
+║    [x] Exit - Land and Finish                                ║{mini_only_controls}
 ║    Ctrl+C : Force quit                                       ║
 ╠══════════════════════════════════════════════════════════════╣
 ║  Topics:                                                     ║
-║    Pub: /quiz/state (current state)                          ║
+║    Pub: /quiz/state, /quiz/answer (current state)            ║
 ║    Sub: /quiz/answer (detection result)                      ║
 ╚══════════════════════════════════════════════════════════════╝
 """

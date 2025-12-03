@@ -338,6 +338,8 @@ State machine-based quiz demo controller that orchestrates both ANAFI and Crazyf
 | `s` | Start (UnInit→Idle) / Return home (Drawing→Idle) |
 | `n` | Next - Start detecting (Idle→Detecting) |
 | `x` | Exit - Land and finish |
+| `1` | (mini_only_mode) Manual answer 1 → figure8 |
+| `2` | (mini_only_mode) Manual answer 2 → vertical_a |
 | `Ctrl+C` | Force quit |
 
 **Subscribed Topics:**
@@ -379,6 +381,7 @@ State machine-based quiz demo controller that orchestrates both ANAFI and Crazyf
 | `operation_timeout_min` | 5.0 | Auto-finish timeout (min) |
 | `home_position_tolerance_m` | 0.1 | Home position tolerance (m) |
 | `home_yaw_tolerance_deg` | 15.0 | Home yaw tolerance (deg) |
+| `mini_only_mode` | false | Test with Mini drone only (skip ANAFI) |
 
 **Answer to Trajectory Mapping:**
 | Answer | Trajectory |

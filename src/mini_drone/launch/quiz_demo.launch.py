@@ -9,6 +9,9 @@ Quiz Demo Launch File
 사용법:
   ros2 launch mini_drone quiz_demo.launch.py
 
+  # Mini drone만 테스트 (ANAFI 없이)
+  ros2 launch mini_drone quiz_demo.launch.py mini_only_mode:=true
+
   # 파라미터 변경 예시
   ros2 launch mini_drone quiz_demo.launch.py operation_timeout_min:=3.0
 """
@@ -42,6 +45,12 @@ def generate_launch_description():
         description='Crazyflie radio URI'
     )
 
+    mini_only_mode_arg = DeclareLaunchArgument(
+        'mini_only_mode',
+        default_value='false',
+        description='Test with Mini drone only (skip ANAFI). In DETECTING state, press 1/2 for manual answer.'
+    )
+
     # Crazyflie Bridge Node
     cf_bridge_node = Node(
         package='mini_drone',
@@ -60,16 +69,16 @@ def generate_launch_description():
     )
 
     # AI-Deck Camera Node (optional - comment out if not using camera)
-    ai_deck_camera_node = Node(
-        package='mini_drone',
-        executable='ai_deck_camera',
-        name='ai_deck_camera',
-        output='screen',
-        parameters=[{
-            'host': '192.168.4.1',
-            'port': 5000,
-        }],
-    )
+    # ai_deck_camera_node = Node(
+    #     package='mini_drone',
+    #     executable='ai_deck_camera',
+    #     name='ai_deck_camera',
+    #     output='screen',
+    #     parameters=[{
+    #         'host': '192.168.4.1',
+    #         'port': 5000,
+    #     }],
+    # )
 
     # Quiz Controller Node
     quiz_controller_node = Node(
@@ -97,6 +106,8 @@ def generate_launch_description():
             # 홈 도달 판정
             'home_position_tolerance_m': 0.1,
             'home_yaw_tolerance_deg': 15.0,
+            # Mini only mode
+            'mini_only_mode': LaunchConfiguration('mini_only_mode'),
         }],
     )
 
@@ -105,9 +116,10 @@ def generate_launch_description():
         operation_timeout_arg,
         mini_home_z_arg,
         uri_arg,
+        mini_only_mode_arg,
         # Nodes
         cf_bridge_node,
-        ai_deck_camera_node,
+        # ai_deck_camera_node,
         quiz_controller_node,
     ])
 
