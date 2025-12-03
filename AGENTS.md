@@ -338,6 +338,7 @@ State machine-based quiz demo controller that orchestrates both ANAFI and Crazyf
 | `s` | Start (UnInit→Idle) / Return home (Drawing→Idle) |
 | `n` | Next - Start detecting (Idle→Detecting) |
 | `x` | Exit - Land and finish |
+| `SPACE` | Emergency Stop (all drones) |
 | `1` | (mini_only_mode) Manual answer 1 → figure8 |
 | `2` | (mini_only_mode) Manual answer 2 → vertical_a |
 | `Ctrl+C` | Force quit |

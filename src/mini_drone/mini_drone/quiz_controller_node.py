@@ -18,6 +18,7 @@ Keyboard Controls:
     'n' - Idle→Detecting (탐지 시작)
     'x' - 종료 (→Finish)
     '1'/'2' - (mini_only_mode + DETECTING) 수동 answer 입력
+    SPACE - Emergency Stop (모든 드론 즉시 정지)
 
 Parameters:
     mini_only_mode: ANAFI 없이 Mini drone만 테스트하는 모드
@@ -180,6 +181,8 @@ class QuizControllerNode(Node):
         # ---- Service Clients ----
         self.cli_anafi_takeoff = self.create_client(Trigger, '/anafi/drone/takeoff')
         self.cli_anafi_land = self.create_client(Trigger, '/anafi/drone/land')
+        self.cli_anafi_emergency = self.create_client(Trigger, '/anafi/drone/emergency')
+        self.cli_cf_stop = self.create_client(Trigger, '/cf/stop')
         self.cli_cf_traj = self.create_client(RunTrajectory, '/cf/traj/run')
 
         # ---- Timers ----
@@ -340,6 +343,38 @@ class QuizControllerNode(Node):
         self.pub_cf_land.publish(msg)
         self.get_logger().info("Mini land command sent")
 
+    def _handle_emergency_stop(self):
+        """Emergency Stop - 모든 드론 즉시 정지"""
+        self.get_logger().warn("!!! EMERGENCY STOP !!!")
+
+        # Mini drone E-STOP
+        if self.cli_cf_stop.service_is_ready():
+            req = Trigger.Request()
+            future = self.cli_cf_stop.call_async(req)
+            future.add_done_callback(
+                lambda f: self.get_logger().warn(f"Mini E-STOP: {f.result().message if f.result() else 'failed'}")
+            )
+        else:
+            self.get_logger().warn("Mini E-STOP service not ready")
+
+        # ANAFI emergency (mini_only_mode가 아닐 때만)
+        if not self.mini_only_mode:
+            if self.cli_anafi_emergency.service_is_ready():
+                req = Trigger.Request()
+                future = self.cli_anafi_emergency.call_async(req)
+                future.add_done_callback(
+                    lambda f: self.get_logger().warn(f"ANAFI E-STOP: {f.result().message if f.result() else 'failed'}")
+                )
+            else:
+                self.get_logger().warn("ANAFI emergency service not ready")
+
+        # 상태를 FINISH로 전환
+        with self._lock:
+            self.state = QuizState.FINISH
+            self.pending_transition = None
+            self.pending_home_return = False
+            self._update_ui()
+
     def _goto_mini_home(self):
         """Mini drone을 홈 위치로 이동"""
         msg = PoseStamped()
@@ -413,6 +448,10 @@ class QuizControllerNode(Node):
                     self._handle_manual_answer_locked(key)
                 else:
                     self.get_logger().debug(f"Key '{key}' ignored (mini_only_mode={self.mini_only_mode}, state={current_state.name})")
+
+            # Space: Emergency Stop
+            elif key == ' ':
+                self._handle_emergency_stop()
 
     def _handle_start_locked(self):
         """UnInit → Idle 전환 처리 (lock 보유 상태)"""
@@ -517,7 +556,8 @@ class QuizControllerNode(Node):
 ║  Controls:                                                   ║
 ║    [s] Start (UnInit→Idle) / Return Home (Drawing→Idle)     ║
 ║    [n] Next - Start Detecting (Idle→Detecting)              ║
-║    [x] Exit - Land and Finish                                ║{mini_only_controls}
+║    [x] Exit - Land and Finish                                ║
+║    [SPACE] EMERGENCY STOP                                    ║{mini_only_controls}
 ║    Ctrl+C : Force quit                                       ║
 ╠══════════════════════════════════════════════════════════════╣
 ║  Topics:                                                     ║
