@@ -11,7 +11,41 @@ from rcl_interfaces.msg import SetParametersResult
 from std_msgs.msg import Float32, Float32MultiArray, Bool
 from geometry_msgs.msg import TwistStamped, PoseStamped
 from std_srvs.srv import Trigger
+from mini_drone_interfaces.srv import RunTrajectory
 
+# ---- cflib 라이브러리 (High-Level Trajectory용) ----
+try:
+    from cflib.crazyflie.mem import MemoryElement, Poly4D
+except ImportError:
+    Poly4D = None
+    MemoryElement = None
+
+# ---- Figure 8 데이터 ----
+FIGURE8_DATA = [
+    [1.050000, 0.000000, -0.000000, 0.000000, -0.000000, 0.830443, -0.276140, -0.384219, 0.180493, -0.000000, 0.000000, -0.000000, 0.000000, -1.356107, 0.688430, 0.587426, -0.329106, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000],
+    [0.710000, 0.396058, 0.918033, 0.128965, -0.773546, 0.339704, 0.034310, -0.026417, -0.030049, -0.445604, -0.684403, 0.888433, 1.493630, -1.361618, -0.139316, 0.158875, 0.095799, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000],
+    [0.620000, 0.922409, 0.405715, -0.582968, -0.092188, -0.114670, 0.101046, 0.075834, -0.037926, -0.291165, 0.967514, 0.421451, -1.086348, 0.545211, 0.030109, -0.050046, -0.068177, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000],
+    [0.700000, 0.923174, -0.431533, -0.682975, 0.177173, 0.319468, -0.043852, -0.111269, 0.023166, 0.289869, 0.724722, -0.512011, -0.209623, -0.218710, 0.108797, 0.128756, -0.055461, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000],
+    [0.560000, 0.405364, -0.834716, 0.158939, 0.288175, -0.373738, -0.054995, 0.036090, 0.078627, 0.450742, -0.385534, -0.954089, 0.128288, 0.442620, 0.055630, -0.060142, -0.076163, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000],
+    [0.560000, 0.001062, -0.646270, -0.012560, -0.324065, 0.125327, 0.119738, 0.034567, -0.063130, 0.001593, -1.031457, 0.015159, 0.820816, -0.152665, -0.130729, -0.045679, 0.080444, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000],
+    [0.700000, -0.402804, -0.820508, -0.132914, 0.236278, 0.235164, -0.053551, -0.088687, 0.031253, -0.449354, -0.411507, 0.902946, 0.185335, -0.239125, -0.041696, 0.016857, 0.016709, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000],
+    [0.620000, -0.921641, -0.464596, 0.661875, 0.286582, -0.228921, -0.051987, 0.004669, 0.038463, -0.292459, 0.777682, 0.565788, -0.432472, -0.060568, -0.082048, -0.009439, 0.041158, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000],
+    [0.710000, -0.923935, 0.447832, 0.627381, -0.259808, -0.042325, -0.032258, 0.001420, 0.005294, 0.288570, 0.873350, -0.515586, -0.730207, -0.026023, 0.288755, 0.215678, -0.148061, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000],
+    [1.053185, -0.398611, 0.850510, -0.144007, -0.485368, -0.079781, 0.176330, 0.234482, -0.153567, 0.447039, -0.532729, -0.855023, 0.878509, 0.775168, -0.391051, -0.713519, 0.391628, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000],
+]
+
+VERTICAL_A_DATA = [
+    [2.42949, 0, 0, 0, 0, 0.127304, -0.0957927, 0.0269372, -0.00273502, 0, 0, 0, 0, 0, 0, 0, 0, 0.5, 0, 0, 0, 0.546897, -0.481704, 0.150591, -0.0165101, 0, 0, 0, 0, 0, 0, 0, 0],
+    [2.53532, 0.5, 0.358651, -0.0126382, -0.0263671, 0.0107106, -0.0131687, 0.00597471, -0.000814174, 0, 0, 0, 0, 0, 0, 0, 0, 1.5, 0.171638, -0.357494, -0.0598504, -0.0768108, 0.13584, -0.048622, 0.00548807, 0, 0, 0, 0, 0, 0, 0, 0],
+    [2.11311, 1, 0.00541951, -0.034309, 0.00576377, 0.270093, -0.349443, 0.146087, -0.0203644, 0, 0, 0, 0, 0, 0, 0, 0, 0.5, -0.0966474, 0.300951, -0.0184669, 0.0608461, -0.113805, 0.0492638, -0.00674873, 0, 0, 0, 0, 0, 0, 0, 0],
+    [1.62923, 0.75, -0.466818, -0.0603873, 0.042239, -0.201069, 0.493527, -0.317951, 0.0635366, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0.126556, -0.161561, 0.0012387, 0.0203292, 0.0639211, -0.0540882, 0.011548, 0, 0, 0, 0, 0, 0, 0, 0]
+]
+
+# ---- Trajectory Registry: type_name -> (data, traj_id) ----
+TRAJECTORY_REGISTRY = {
+    'figure8': (FIGURE8_DATA, 1),
+    'vertical_a': (VERTICAL_A_DATA, 2),
+}
 
 def _qos_ctrl() -> QoSProfile:
     q = QoSProfile(depth=10)
@@ -30,10 +64,6 @@ def _qos_sense() -> QoSProfile:
 class ControlManager:
     """
     Crazyflie 제어 브리지.
-
-    - hover latch 옵션:
-      * hover_hold_forever: True면 hover_timeout_s를 넘겨도 마지막 세트포인트를 계속 재전송
-      * hover_max_hold_s: 0보다 크면 그 시간 이상은 안전을 위해 notify_stop 전송
     """
 
     def __init__(self, node,
@@ -53,13 +83,6 @@ class ControlManager:
         # ---------- Parameters ----------
         self.dry_run = bool(get_or_declare('dry_run', False))
         # 타 모듈이 미리 선언했을 가능성이 높은 항목들: get_or_declare 로 안전하게 처리
-        self.hover_timeout_s = float(get_or_declare('hover_timeout_s', float(hover_timeout_s)))
-        self.hover_hold_forever = bool(get_or_declare('hover_hold_forever', True))
-        self.hover_max_hold_s = float(get_or_declare('hover_max_hold_s', 0.0))  # 0=무제한
-
-        # 패턴 관련(중복 선언 방지)
-        self.spin_duration_s = float(get_or_declare('spin_duration_s', 3.0))
-        self.square_turn_rate_deg_s = float(get_or_declare('square_turn_rate_deg_s', 90.0))
 
         self._hl_active_until = 0.0
 
@@ -71,8 +94,6 @@ class ControlManager:
         # 내부 상태
         self.cf = None
         self._lock = threading.Lock()
-        self._last_hover: Optional[TwistStamped] = None
-        self._last_hover_time = 0.0
 
         self.cmd_rate_hz = float(cmd_rate_hz)
         self.hl_durations = hl_durations or {
@@ -87,29 +108,18 @@ class ControlManager:
         # ---- Publishers ----
         self.pub_estop = self.node.create_publisher(Bool, '/cf/estop', _qos_sense())
 
-        # ---- Subscriptions (저수준 hover & HL) ----
-        self.node.create_subscription(TwistStamped, '/cf/cmd_hover', self._on_cmd_hover, _qos_ctrl())
+        # ---- Subscriptions (HL) ----
         self.node.create_subscription(Float32, '/cf/hl/takeoff', self._on_hl_takeoff, _qos_ctrl())
         self.node.create_subscription(Float32, '/cf/hl/land',    self._on_hl_land,    _qos_ctrl())
         self.node.create_subscription(PoseStamped, '/cf/hl/goto', self._on_hl_goto,   _qos_ctrl())
-
-        # ---- Pattern commands ----
-        self.node.create_subscription(Float32MultiArray, '/cf/pattern/circle', self._on_pattern_circle, _qos_ctrl())
-        self.node.create_subscription(Float32, '/cf/pattern/spin', self._on_pattern_spin, _qos_ctrl())
-        self.node.create_subscription(Float32MultiArray, '/cf/pattern/square', self._on_pattern_square, _qos_ctrl())
 
         # ---- Services ----
         self.node.create_service(Trigger, '/cf/stop',         self._srv_stop_cb)
         self.node.create_service(Trigger, '/cf/estop_reset',  self._srv_estop_reset)
         self.node.create_service(Trigger, '/cf/notify_stop',  self._srv_notify_cb)
-        self.node.create_service(Trigger, '/cf/pattern/stop', self._srv_pattern_stop)
 
-        # ---- Timers ----
-        self._hover_timer = self.node.create_timer(1.0 / max(1.0, self.cmd_rate_hz), self._hover_tick)
-
-        # ---- Pattern thread ----
-        self._pat_th: Optional[threading.Thread] = None
-        self._pat_stop = threading.Event()
+        # ---- Trajectory Service (단일 서비스, type 인자로 선택) ----
+        self.node.create_service(RunTrajectory, '/cf/traj/run', self._srv_traj_run)
 
         if self.dry_run:
             self.node.get_logger().info('[DRY-RUN] 실제 전송 없이 로그만 출력합니다. (-p dry_run:=false 로 전송 허용 가능)')
@@ -140,52 +150,17 @@ class ControlManager:
         with self._lock:
             self.cf = None
 
-    def stop_patterns(self):
-        self._pat_stop.set()
-        if self._pat_th and self._pat_th.is_alive():
-            self._pat_th.join(timeout=1.0)
-        self._pat_th = None
-        self._pat_stop.clear()
-
     # ========== Param updates ==========
     def _on_set_params(self, params):
         for p in params:
             if p.name == 'dry_run':
                 self.dry_run = bool(p.value)
                 self.node.get_logger().warn(f'[PARAM] dry_run -> {self.dry_run}')
-            elif p.name == 'hover_timeout_s':
-                self.hover_timeout_s = float(p.value)
-                self.node.get_logger().warn(f'[PARAM] hover_timeout_s -> {self.hover_timeout_s:.3f}s')
-            elif p.name == 'hover_hold_forever':
-                self.hover_hold_forever = bool(p.value)
-                self.node.get_logger().warn(f'[PARAM] hover_hold_forever -> {self.hover_hold_forever}')
-            elif p.name == 'hover_max_hold_s':
-                self.hover_max_hold_s = float(p.value)
-                self.node.get_logger().warn(f'[PARAM] hover_max_hold_s -> {self.hover_max_hold_s:.3f}s')
-            elif p.name == 'spin_duration_s':
-                self.spin_duration_s = float(p.value)
-                self.node.get_logger().warn(f'[PARAM] spin_duration_s -> {self.spin_duration_s:.2f}s')
-            elif p.name == 'square_turn_rate_deg_s':
-                self.square_turn_rate_deg_s = float(p.value)
-                self.node.get_logger().warn(f'[PARAM] square_turn_rate_deg_s -> {self.square_turn_rate_deg_s:.1f} deg/s')
         return SetParametersResult(successful=True)
 
     # ========== E-STOP helpers ==========
     def _publish_estop_state(self):
         self.pub_estop.publish(Bool(data=self.estop_latched))
-
-    # ========== Internal send wrappers ==========
-    def _send_hover_setpoint(self, vx: float, vy: float, yawrate_deg: float, z: float):
-        if self.estop_latched:
-            self.node.get_logger().warn("[E-STOP] hover 차단됨")
-            return
-        if self.dry_run or self.cf is None:
-            self.node.get_logger().info(f"[SIM hover] vx={vx:.3f} m/s, vy={vy:.3f} m/s, z={z:.3f} m, yawrate={yawrate_deg:.1f} deg/s")
-            return
-        try:
-            self.cf.commander.send_hover_setpoint(vx, vy, yawrate_deg, z)
-        except Exception as e:
-            self.node.get_logger().warn(f'hover send failed: {e}')
 
     def _send_notify_stop(self):
         if self.dry_run or self.cf is None:
@@ -260,78 +235,17 @@ class ControlManager:
         except Exception as e:
             self.node.get_logger().error(f'HL goto failed: {e}')
 
-    # ========== Hover (low-level) ==========
-    def _on_cmd_hover(self, msg: TwistStamped):
-        if self.estop_latched:
-            self.node.get_logger().warn('[E-STOP] hover 명령 무시')
-            return
-        with self._lock:
-            self._last_hover = msg
-            self._last_hover_time = self.node.get_clock().now().nanoseconds * 1e-9
-
-    def _hover_tick(self):
-        if time.time() < getattr(self, "_hl_active_until", 0.0):
-            self._send_notify_stop()
-            return
-        with self._lock:
-            cf = self.cf
-            cmd = self._last_hover
-            t0 = self._last_hover_time
-
-        # 연결 없고 드라이런도 아니면 아무것도 안 함
-        if (cf is None) and not self.dry_run:
-            return
-
-        # E-STOP 래치: 계속 STOP 유지
-        if self.estop_latched:
-            self._send_stop()
-            return
-
-        now = self.node.get_clock().now().nanoseconds * 1e-9
-
-        # 최근 호버 명령 자체가 없으면 정지 알림
-        if cmd is None:
-            self._send_notify_stop()
-            return
-
-        age = now - t0
-
-        # 안전 최대 유지시간(옵션) 초과 시 정지
-        if self.hover_max_hold_s > 0.0 and age > self.hover_max_hold_s:
-            self.node.get_logger().warn(
-                f"[HOVER] max hold exceeded ({age:.3f}s > {self.hover_max_hold_s:.3f}s) → notify_stop"
-            )
-            self._send_notify_stop()
-            return
-
-        # latch 비활성인 경우: 타임아웃 넘기면 notify_stop
-        if (not self.hover_hold_forever) and (age > self.hover_timeout_s):
-            self.node.get_logger().warn(
-                f"[HOVER] 입력 타임아웃 → notify_stop 전송 (dt={age:.3f}s, limit={self.hover_timeout_s:.3f}s)"
-            )
-            self._send_notify_stop()
-            return
-
-        # 여기까지 왔으면 마지막 세트포인트를 계속 재전송(래치)
-        vx = float(cmd.twist.linear.x)
-        vy = float(cmd.twist.linear.y)
-        z  = float(cmd.twist.linear.z)   # Crazyflie hover API: 절대 고도
-        yawrate_deg = math.degrees(float(cmd.twist.angular.z))
-        self._send_hover_setpoint(vx, vy, yawrate_deg, z)
-
     # ========== High-level (takeoff/land/goto) ==========
     def _on_hl_takeoff(self, msg: Float32):
         if not self._enable_hl():
             return
+        
         self._hl_takeoff(float(msg.data), float(self.hl_durations['takeoff']))
+        self._hl_active_until = time.time() + float(self.hl_durations['takeoff']) + 0.5
 
     def _on_hl_land(self, msg: Float32):
         if not self._enable_hl():
             return
-        
-        with self._lock:
-            self._last_hover = None
-            self._last_hover_time = 0.0
 
         self._hl_land(float(msg.data), float(self.hl_durations['land']))
         import time
@@ -347,101 +261,7 @@ class ControlManager:
                       float(msg.pose.position.z),
                       float(yaw),
                       float(self.hl_durations['goto']))
-
-    # ========== Patterns ==========
-    def _start_pattern(self, target_fn, *args, **kwargs):
-        self.stop_patterns()
-        self._pat_stop.clear()
-        self._pat_th = threading.Thread(target=target_fn, args=args, kwargs=kwargs, daemon=True)
-        self._pat_th.start()
-
-    def _srv_pattern_stop(self, req, res):
-        self.stop_patterns()
-        res.success = True; res.message = 'pattern stopped'
-        return res
-
-    def _on_pattern_circle(self, msg: Float32MultiArray):
-        if self.estop_latched:
-            self.node.get_logger().warn('[E-STOP] circle 패턴 차단됨')
-            return
-
-        d = list(msg.data)
-        if len(d) < 4:
-            self.node.get_logger().error('circle needs [radius_m, speed_mps, z_m, duration_s]')
-            return
-        radius, speed, z, duration = map(float, d[:4])
-        omega = speed / max(1e-6, abs(radius))  # rad/s
-        yawrate_deg = math.degrees(omega) * (1.0 if speed >= 0 else -1.0)
-
-        def _run():
-            dt = 1.0 / max(1.0, self.cmd_rate_hz)
-            self.node.get_logger().info(f'[PATTERN circle] r={radius:.2f}m v={speed:.2f}m/s z={z:.2f}m dur={duration:.2f}s (yaw={yawrate_deg:.1f}deg/s)')
-            t0 = time.time()
-            try:
-                while (time.time() - t0) < duration and not self._pat_stop.is_set() and not self.estop_latched:
-                    self._send_hover_setpoint(speed, 0.0, yawrate_deg, z)
-                    time.sleep(dt)
-            finally:
-                self._send_notify_stop()
-                self.node.get_logger().info('[PATTERN circle] done')
-
-        self._start_pattern(_run)
-
-    def _on_pattern_spin(self, msg: Float32):
-        if self.estop_latched:
-            self.node.get_logger().warn('[E-STOP] spin 패턴 차단됨')
-            return
-
-        yawrate_deg = math.degrees(float(msg.data))
-        duration = float(self.spin_duration_s)
-
-        def _run():
-            dt = 1.0 / max(1.0, self.cmd_rate_hz)
-            self.node.get_logger().info(f'[PATTERN spin] yawrate={yawrate_deg:.1f} deg/s dur={duration:.2f}s')
-            t0 = time.time()
-            try:
-                while (time.time() - t0) < duration and not self._pat_stop.is_set() and not self.estop_latched:
-                    self._send_hover_setpoint(0.0, 0.0, yawrate_deg, 0.0)
-                    time.sleep(dt)
-            finally:
-                self._send_notify_stop()
-                self.node.get_logger().info('[PATTERN spin] done')
-
-        self._start_pattern(_run)
-
-    def _on_pattern_square(self, msg: Float32MultiArray):
-        if self.estop_latched:
-            self.node.get_logger().warn('[E-STOP] square 패턴 차단됨')
-            return
-
-        d = list(msg.data)
-        if len(d) < 3:
-            self.node.get_logger().error('square needs [side_m, speed_mps, z_m]')
-            return
-        L, speed, z = map(float, d[:3])
-        turn_rate = float(self.square_turn_rate_deg_s)
-        move_time = abs(L / max(1e-6, speed))
-        turn_time = 90.0 / max(1e-3, abs(turn_rate))
-
-        def _run():
-            dt = 1.0 / max(1.0, self.cmd_rate_hz)
-            self.node.get_logger().info(f'[PATTERN square] L={L:.2f}m v={speed:.2f} z={z:.2f} (turn={turn_rate:.1f}deg/s)')
-            try:
-                for _ in range(4):
-                    t0 = time.time()
-                    while (time.time() - t0) < move_time and not self._pat_stop.is_set() and not self.estop_latched:
-                        self._send_hover_setpoint(speed, 0.0, 0.0, z)
-                        time.sleep(dt)
-                    t1 = time.time()
-                    yaw_deg_s = turn_rate if speed >= 0 else -turn_rate
-                    while (time.time() - t1) < turn_time and not self._pat_stop.is_set() and not self.estop_latched:
-                        self._send_hover_setpoint(0.0, 0.0, yaw_deg_s, z)
-                        time.sleep(dt)
-                self.node.get_logger().info('[PATTERN square] done')
-            finally:
-                self._send_notify_stop()
-
-        self._start_pattern(_run)
+        self._hl_active_until = time.time() + float(self.hl_durations['goto']) + 0.5
 
     # ========== Services ==========
     def _srv_stop_cb(self, req, res):
@@ -463,4 +283,95 @@ class ControlManager:
         self._send_notify_stop()
         res.success = True
         res.message = 'notify_setpoint_stop (or SIM) sent'
+        return res
+
+# ========== Trajectory Service Implementation ==========
+    def _upload_trajectory(self, traj_data, traj_id: int) -> tuple[bool, str, float]:
+        """
+        궤적 데이터를 드론 메모리에 업로드하는 공통 헬퍼.
+        Returns: (success, message, total_duration)
+        """
+        if self.cf is None:
+            return False, "CF not connected", 0.0
+        
+        if Poly4D is None:
+            return False, "cflib not installed", 0.0
+
+        try:
+            traj_mem = self.cf.mem.get_mems(MemoryElement.TYPE_TRAJ)[0]
+            traj_mem.trajectory = []
+            
+            total_duration = 0.0
+            for row in traj_data:
+                duration = row[0]
+                x = Poly4D.Poly(row[1:9])
+                y = Poly4D.Poly(row[9:17])
+                z = Poly4D.Poly(row[17:25])
+                yaw = Poly4D.Poly(row[25:33])
+                traj_mem.trajectory.append(Poly4D(duration, x, y, z, yaw))
+                total_duration += duration
+            
+            if not traj_mem.write_data_sync():
+                return False, "Upload failed", 0.0
+            
+            self.cf.high_level_commander.define_trajectory(traj_id, 0, len(traj_mem.trajectory))
+            return True, f"Uploaded ID {traj_id} (dur={total_duration:.1f}s)", total_duration
+            
+        except Exception as e:
+            return False, str(e), 0.0
+
+    def _start_trajectory(self, traj_id: int, duration: float) -> tuple[bool, str]:
+        """
+        업로드된 궤적을 실행하는 공통 헬퍼.
+        Returns: (success, message)
+        """
+        if not self._enable_hl():
+            return False, "Enable HL failed"
+
+        try:
+            self.cf.high_level_commander.start_trajectory(traj_id, 1.0, relative=True)
+            self._hl_active_until = time.time() + duration + 2.0
+            return True, f"Started Trajectory ID {traj_id}"
+        except Exception as e:
+            return False, str(e)
+
+    def _srv_traj_run(self, req, res):
+        """
+        단일 Trajectory 서비스: trajectory_type 인자로 궤적 선택
+        지원 타입: 'figure8', 'vertical_a'
+        """
+        traj_type = req.trajectory_type.lower().strip()
+        
+        # Registry에서 조회
+        if traj_type not in TRAJECTORY_REGISTRY:
+            available = ', '.join(TRAJECTORY_REGISTRY.keys())
+            res.success = False
+            res.message = f"Unknown trajectory type '{traj_type}'. Available: {available}"
+            self.node.get_logger().warn(res.message)
+            return res
+        
+        traj_data, traj_id = TRAJECTORY_REGISTRY[traj_type]
+        self.node.get_logger().info(f"[TRAJ] Running '{traj_type}' (upload + start)...")
+        
+        # 1. Upload
+        ok, msg, duration = self._upload_trajectory(traj_data, traj_id=traj_id)
+        if not ok:
+            self.node.get_logger().error(f"[TRAJ] Upload failed: {msg}")
+            res.success = False
+            res.message = f"Upload failed: {msg}"
+            return res
+        
+        self.node.get_logger().info(f"[TRAJ] {msg}")
+        
+        # 2. Start
+        ok, msg = self._start_trajectory(traj_id=traj_id, duration=duration)
+        if not ok:
+            self.node.get_logger().error(f"[TRAJ] Start failed: {msg}")
+            res.success = False
+            res.message = f"Start failed: {msg}"
+            return res
+        
+        res.success = True
+        res.message = f"'{traj_type}' started (dur={duration:.1f}s)"
+        self.node.get_logger().info(res.message)
         return res

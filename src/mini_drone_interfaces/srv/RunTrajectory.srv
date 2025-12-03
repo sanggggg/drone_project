@@ -1,0 +1,7 @@
+# Request: trajectory type name
+string trajectory_type   # e.g., "figure8", "vertical_a"
+---
+# Response
+bool success
+string message
+
