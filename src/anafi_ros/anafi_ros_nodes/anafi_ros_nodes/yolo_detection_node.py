@@ -119,18 +119,16 @@ class YoloDetectionNode(Node):
         self.declare_parameter('model', 'yolov8n.engine')
         self.declare_parameter('device', 'cuda')
         self.declare_parameter('confidence', 0.25)
-        self.declare_parameter('inference_rate', 20.0)  # Hz
+        self.declare_parameter('inference_rate', 10)  # Hz
         self.declare_parameter('publish_compressed', True)
         self.declare_parameter('camera_topic', 'camera/image')
         self.declare_parameter('iou_threshold', 0.45)
         self.declare_parameter('max_detections', 100)
-        self.declare_parameter('classes', [])  # Empty list means all classes
+        self.declare_parameter('classes', [62])  # Empty list means all classes
         
         # OCR parameters
         self.declare_parameter('ocr_enabled', True)
         self.declare_parameter('ocr_classes', [])  # Empty = all classes or full image
-        self.declare_parameter('ocr_lang', 'eng')
-        self.declare_parameter('ocr_whitelist', '')  # Empty = all characters
 
         self.model_path = self.get_parameter('model').value
         self.device = self.get_parameter('device').value
@@ -145,9 +143,6 @@ class YoloDetectionNode(Node):
         # OCR parameters
         self.ocr_enabled = bool(self.get_parameter('ocr_enabled').value)
         self.ocr_classes = self.get_parameter('ocr_classes').value
-        self.ocr_lang = self.get_parameter('ocr_lang').value
-        self.ocr_whitelist = self.get_parameter('ocr_whitelist').value
-
         # Calculate minimum interval between inferences
         self.min_inference_interval = 1.0 / self.inference_rate if self.inference_rate > 0 else 0.0
 
@@ -177,16 +172,11 @@ class YoloDetectionNode(Node):
         if self.ocr_enabled:
             if OCR_AVAILABLE:
                 self.ocr = OCRProcessor(
-                    lang=self.ocr_lang,
-                    whitelist=self.ocr_whitelist,
-                    preprocess=True,
-                    logger=self.get_logger()
+                    model_name="microsoft/trocr-base-printed",
+                    use_gpu=True,
+                    preprocess=False,
+                    logger=None
                 )
-                if self.ocr.is_available():
-                    self.get_logger().info(f"OCR enabled (lang={self.ocr_lang})")
-                else:
-                    self.get_logger().warn("OCR requested but Tesseract not available")
-                    self.ocr = None
             else:
                 self.get_logger().warn("OCR requested but ocr_utils module not available")
 
@@ -243,7 +233,6 @@ class YoloDetectionNode(Node):
         self.get_logger().info(f"  OCR Topic:        /anafi/yolo/ocr_image")
         self.get_logger().info(f"  OCR Enabled:      {self.ocr_enabled and self.ocr is not None}")
         if self.ocr_enabled and self.ocr:
-            self.get_logger().info(f"  OCR Language:     {self.ocr_lang}")
             self.get_logger().info(f"  OCR Classes:      {self.ocr_classes if self.ocr_classes else 'all/full image'}")
         self.get_logger().info("=" * 60)
 
@@ -319,6 +308,15 @@ class YoloDetectionNode(Node):
             self.pub_detections.publish(detection_msg)
             
             # Run OCR on detected regions or full image
+
+            # keep = []
+            # for i in range(len(result.boxes)):
+            #     cid = int(result.boxes.cls[i].cpu().numpy())
+            #     if cid == 62:  # 너가 원하는 class
+            #         keep.append(i)
+
+            # result.boxes = result.boxes[keep]
+
             if self.ocr is not None:
                 self._run_ocr(cv_image, result, msg.header)
             
@@ -445,14 +443,14 @@ class YoloDetectionNode(Node):
         if not has_detections:
             # No detections - run OCR on full image
             # Preprocess and run OCR on the full image
-            text, preprocessed_img = self.ocr.recognize(cv_image)
+            text, preprocessed_img = self.ocr.recognize_model(cv_image)
             if text:
                 self.get_logger().info(f"[OCR] Full image: '{text}'")
-            
+            else:
+                self.get_logger().info(f"Failed to publish OCR image")
             # Publish preprocessed full image
             try:
-                # pre is single-channel mono8
-                ros_image = self.bridge.cv2_to_imgmsg(preprocessed_img, encoding='mono8')
+                ros_image = self.bridge.cv2_to_imgmsg(preprocessed_img, encoding='bgr8')
                 ros_image.header = header
                 ros_image.header.frame_id = 'ocr_full_image'
                 self.pub_ocr_image.publish(ros_image)
@@ -483,16 +481,18 @@ class YoloDetectionNode(Node):
                 
                 if cropped is not None and cropped.size > 0:
                     # Preprocess crop and run OCR on the preprocessed image
-                    text, preprocessed_img = self.ocr.recognize(cropped)
+                    text, preprocessed_img = self.ocr.recognize_model(cropped)
                     
                     # Log OCR result
-                    self.get_logger().info(
-                        f"[OCR] {class_name}({confidence:.2f}) @ [{x1},{y1},{x2},{y2}]: '{text}'"
-                    )
-                    
+                    if text:
+                        self.get_logger().info(
+                            f"[OCR] {class_name}({confidence:.2f}) @ [{x1},{y1},{x2},{y2}]: '{text}'"
+                        )
+                    else:
+                        self.get_logger().info(f"Failed to publish OCR image")
                     # Publish preprocessed cropped image
                     try:
-                        ros_image = self.bridge.cv2_to_imgmsg(preprocessed_img, encoding='mono8')
+                        ros_image = self.bridge.cv2_to_imgmsg(preprocessed_img, encoding='bgr8')
                         ros_image.header = header
                         ros_image.header.frame_id = f'ocr_{class_name}_{i}'
                         self.pub_ocr_image.publish(ros_image)
@@ -501,12 +501,13 @@ class YoloDetectionNode(Node):
             
             # If no matching classes found, run OCR on full image
             if not processed_any:
-                text, preprocessed_img = self.ocr.recognize(cv_image)
+                text, preprocessed_img = self.ocr.recognize_model(cv_image)
                 if text:
                     self.get_logger().info(f"[OCR] Full image (no matching class): '{text}'")
-                
+                else:
+                    self.get_logger().info(f"Failed to publish OCR image")               
                 try:
-                    ros_image = self.bridge.cv2_to_imgmsg(preprocessed_img, encoding='mono8')
+                    ros_image = self.bridge.cv2_to_imgmsg(preprocessed_img, encoding='bgr8')
                     ros_image.header = header
                     ros_image.header.frame_id = 'ocr_full_image'
                     self.pub_ocr_image.publish(ros_image)
