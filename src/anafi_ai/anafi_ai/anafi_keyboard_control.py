@@ -78,6 +78,8 @@ Anafi AI MoveBy Keyboard Controller
   k : HALT 강제 정지 (/anafi/drone/halt)
   o : offboard 토글 (/anafi/skycontroller/offboard)
   c : 화면 추적 모드 토글 (YOLO 타겟을 중앙으로 이동)
+  1 : 성공 모션 (위아래 흔들기 + 회전)
+  2 : 실패 모션 (좌우 흔들기)
   ? : 이 도움말 출력
 
 카메라
@@ -191,6 +193,12 @@ class AnafiMoveByKeyboard(Node):
         self._no_move_count = 0           # Count of consecutive no-movement detections
         self._no_move_threshold = 3       # After this many no-moves, consider centered
         
+        # Motion state
+        self._motion_in_progress = False
+        self._motion_sequence = []        # List of (dx, dy, dz, dyaw) tuples
+        self._motion_index = 0            # Current index in motion sequence
+        self._motion_timer = None         # Timer for motion sequence
+        
         # Tracking enable publisher
         self.pub_tracking_enable = self.create_publisher(
             Bool, 'yolo/tracking_enable', qos_ctrl
@@ -258,6 +266,13 @@ class AnafiMoveByKeyboard(Node):
 
     # ---------- MoveBy 완료 콜백 ----------
     def _on_moveby_done(self, msg: Bool):
+        # 모션 시퀀스 진행 중이면 다음 동작 실행
+        if self._motion_in_progress:
+            # 짧은 딜레이 후 다음 동작 실행 (0.1초)
+            if self._motion_timer is not None:
+                self._motion_timer.cancel()
+            self._motion_timer = self.create_timer(0.05, self._motion_timer_callback)
+        
         # Clear tracking move pending flag and record completion time
         if self._tracking_move_pending:
             self._tracking_move_pending = False
@@ -299,6 +314,13 @@ class AnafiMoveByKeyboard(Node):
             self.get_logger().info("MoveBy 완료 ✅")
         else:
             self.get_logger().warn("MoveBy 실패 ❌")
+
+    def _motion_timer_callback(self):
+        """모션 타이머 콜백 - 다음 동작 실행"""
+        if self._motion_timer is not None:
+            self._motion_timer.cancel()
+            self._motion_timer = None
+        self._execute_next_motion()
 
     # ---------- Tracking 콜백 ----------
     def _on_tracking_status(self, msg: String):
@@ -342,6 +364,74 @@ class AnafiMoveByKeyboard(Node):
             self.get_logger().warning("[OCR] OCR 모드 ON - 수식 인식을 시작합니다")
         else:
             self.get_logger().warning("[OCR] OCR 모드 OFF")
+
+    # ---------- 성공/실패 모션 ----------
+    def _start_success_motion(self):
+        """성공 모션: 위아래로 빠르게 왕복 2번"""
+        if self._motion_in_progress:
+            self.get_logger().warn("[Motion] 이미 모션 진행 중입니다")
+            return
+        
+        self.get_logger().warning("[Motion] 🎉 성공! 위아래 왕복 2번 🎉")
+        
+        # 위아래 왕복 2번 (빠르게)
+        step = 0.2  # 20cm 위아래
+        
+        self._motion_sequence = [
+            # 왕복 1
+            (0.0, 0.0, -step, 0.0),  # 위로
+            (0.0, 0.0, step, 0.0),   # 아래로 (원위치)
+            # 왕복 2
+            (0.0, 0.0, -step, 0.0),  # 위로
+            (0.0, 0.0, step, 0.0),   # 아래로 (원위치)
+        ]
+        
+        self._motion_index = 0
+        self._motion_in_progress = True
+        self._execute_next_motion()
+
+    def _start_failure_motion(self):
+        """실패 모션: 좌우로 빠르게 회전 왕복 2번"""
+        if self._motion_in_progress:
+            self.get_logger().warn("[Motion] 이미 모션 진행 중입니다")
+            return
+        
+        self.get_logger().warning("[Motion] 😢 실패! 좌우 회전 왕복 2번 😢")
+        
+        # 좌우 회전 왕복 2번 (빠르게)
+        yaw_deg = 30.0  # 30도 회전
+        yaw_rad = yaw_deg * 3.141592653589793 / 180.0
+        
+        self._motion_sequence = [
+            # 왕복 1
+            (0.0, 0.0, 0.0, -yaw_rad),  # 왼쪽 회전
+            (0.0, 0.0, 0.0, yaw_rad),   # 오른쪽 회전 (원위치)
+            # 왕복 2
+            (0.0, 0.0, 0.0, yaw_rad),  # 왼쪽 회전
+            (0.0, 0.0, 0.0, -yaw_rad),   # 오른쪽 회전 (원위치)
+        ]
+        
+        self._motion_index = 0
+        self._motion_in_progress = True
+        self._execute_next_motion()
+
+    def _execute_next_motion(self):
+        """모션 시퀀스의 다음 동작 실행"""
+        if self._motion_index >= len(self._motion_sequence):
+            # 모션 완료
+            self._motion_in_progress = False
+            self._motion_sequence = []
+            self._motion_index = 0
+            self.get_logger().warning("[Motion] ✅ 모션 완료!")
+            return
+        
+        dx, dy, dz, dyaw = self._motion_sequence[self._motion_index]
+        self.get_logger().info(
+            f"[Motion] 동작 {self._motion_index + 1}/{len(self._motion_sequence)}: "
+            f"dx={dx:.2f}, dy={dy:.2f}, dz={dz:.2f}, dyaw={dyaw:.2f}"
+        )
+        self._publish_moveby(dx=dx, dy=dy, dz=dz, dyaw=dyaw)
+        self._motion_index += 1
 
     def _start_tracking_timer(self):
         """Start the auto-tracking timer."""
@@ -674,6 +764,14 @@ class AnafiMoveByKeyboard(Node):
         elif ch in ('n', 'N'):
             # n 또는 N: OCR 토글
             self._toggle_ocr()
+        
+        # --- 성공/실패 모션 ---
+        elif ch == '1':
+            # 1: 성공 모션
+            self._start_success_motion()
+        elif ch == '2':
+            # 2: 실패 모션
+            self._start_failure_motion()
         
         elif ch == '?':
             self.get_logger().info(HELP_TEXT)
