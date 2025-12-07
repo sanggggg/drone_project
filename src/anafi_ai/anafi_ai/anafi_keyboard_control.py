@@ -47,10 +47,13 @@ import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 
-from std_msgs.msg import Bool
+from std_msgs.msg import Bool, String
 from std_srvs.srv import Trigger, SetBool
 from anafi_ros_interfaces.msg import MoveByCommand
 from sensor_msgs.msg import Image
+from geometry_msgs.msg import PointStamped
+import json
+import math
 
 
 HELP_TEXT = r"""
@@ -74,6 +77,7 @@ Anafi AI MoveBy Keyboard Controller
   h : 귀환 (/anafi/drone/rth)
   k : HALT 강제 정지 (/anafi/drone/halt)
   o : offboard 토글 (/anafi/skycontroller/offboard)
+  c : 화면 추적 모드 토글 (YOLO 타겟을 중앙으로 이동)
   ? : 이 도움말 출력
 
 카메라
@@ -160,6 +164,54 @@ class AnafiMoveByKeyboard(Node):
 
         # 카메라 상태
         self._camera_frame_count = 0
+        
+        # ---------- Tracking State ----------
+        self._tracking_enabled = False
+        self._tracking_status = None  # Latest tracking status from YOLO
+        self._tracking_move_scale = 0.8  # Meters per normalized offset (increased for actual movement)
+        self._tracking_min_move = 0.15    # Minimum movement threshold (m) - Anafi may ignore smaller moves
+        self._tracking_max_move = 0.25    # Maximum movement per step (m)
+        self._tracking_timer = None       # Timer for auto tracking
+        self._tracking_interval = 0.5     # Seconds between tracking checks (faster polling)
+        self._tracking_move_pending = False  # Flag to wait for move completion
+        self._tracking_stabilize_time = 1.0  # Seconds to wait after move completion for image stabilization
+        self._tracking_move_done_time = None  # Time when last move completed
+        
+        # Bbox size target for forward/backward control (dx)
+        self._target_bbox_width = 270.0   # Target bbox width in pixels
+        self._target_bbox_height = 200.0  # Target bbox height in pixels
+        self._bbox_tolerance = 0.15       # 10% tolerance
+        self._tracking_dx_step = 0.15     # Forward/backward step size (m)
+        self._tracking_centered_once = False  # True if centered at least once (then only dx)
+        
+        # Position tracking for movement verification
+        self._current_position = None     # Current drone position (x, y, z)
+        self._position_before_move = None # Position before moveby command
+        self._move_distance_threshold = 0.05  # Minimum distance (m) to consider "moved"
+        self._no_move_count = 0           # Count of consecutive no-movement detections
+        self._no_move_threshold = 3       # After this many no-moves, consider centered
+        
+        # Tracking enable publisher
+        self.pub_tracking_enable = self.create_publisher(
+            Bool, 'yolo/tracking_enable', qos_ctrl
+        )
+        
+        # OCR enable publisher
+        self._ocr_enabled = False
+        self.pub_ocr_enable = self.create_publisher(
+            Bool, 'yolo/ocr_enable', qos_ctrl
+        )
+        
+        # Tracking status subscriber
+        self.sub_tracking_status = self.create_subscription(
+            String, 'yolo/tracking_status', self._on_tracking_status, qos_ctrl
+        )
+        
+        # Position subscriber for movement verification
+        qos_sensor = _make_qos(depth=10, reliable=False)  # BEST_EFFORT for sensor data
+        self.sub_position = self.create_subscription(
+            PointStamped, 'drone/position_local', self._on_position, qos_sensor
+        )
 
         # 키보드 초기화
         self._kb = None
@@ -199,12 +251,272 @@ class AnafiMoveByKeyboard(Node):
                 f"카메라 프레임 {self._camera_frame_count}개 수신 중..."
             )
 
+    # ---------- Position 콜백 ----------
+    def _on_position(self, msg: PointStamped):
+        """Receive local position from drone."""
+        self._current_position = (msg.point.x, msg.point.y, msg.point.z)
+
     # ---------- MoveBy 완료 콜백 ----------
     def _on_moveby_done(self, msg: Bool):
+        # Clear tracking move pending flag and record completion time
+        if self._tracking_move_pending:
+            self._tracking_move_pending = False
+            self._tracking_move_done_time = time.time()  # Record when move completed
+            
+            # Check if drone actually moved
+            if self._position_before_move is not None and self._current_position is not None:
+                dx = self._current_position[0] - self._position_before_move[0]
+                dy = self._current_position[1] - self._position_before_move[1]
+                dz = self._current_position[2] - self._position_before_move[2]
+                distance = math.sqrt(dx*dx + dy*dy + dz*dz)
+                
+                if distance < self._move_distance_threshold:
+                    self._no_move_count += 1
+                    self.get_logger().warn(
+                        f"[Tracking] 이동 명령 완료했지만 실제 이동 없음! "
+                        f"(거리: {distance:.3f}m < {self._move_distance_threshold}m, "
+                        f"연속 {self._no_move_count}회)"
+                    )
+                    
+                    # If no movement detected multiple times, consider it centered
+                    if self._no_move_count >= self._no_move_threshold and not self._tracking_centered_once:
+                        self._tracking_centered_once = True
+                        self.get_logger().warning(
+                            f"[Tracking] ★ {self._no_move_threshold}회 연속 이동 없음 → 좌우/상하 정렬 완료로 간주! ★"
+                        )
+                else:
+                    self._no_move_count = 0  # Reset counter on successful move
+                    self.get_logger().info(
+                        f"[Tracking] 이동 완료 - 실제 이동 거리: {distance:.3f}m"
+                    )
+            
+            self._position_before_move = None  # Clear saved position
+            
+            if self._tracking_enabled:
+                self.get_logger().info("[Tracking] 이동 완료 - 안정화 대기 시작")
+        
         if msg.data:
             self.get_logger().info("MoveBy 완료 ✅")
         else:
             self.get_logger().warn("MoveBy 실패 ❌")
+
+    # ---------- Tracking 콜백 ----------
+    def _on_tracking_status(self, msg: String):
+        """Receive tracking status from YOLO detection node."""
+        try:
+            self._tracking_status = json.loads(msg.data)
+        except json.JSONDecodeError:
+            self.get_logger().warn("Failed to parse tracking status JSON")
+
+    def _toggle_tracking(self):
+        """Toggle tracking mode on/off."""
+        self._tracking_enabled = not self._tracking_enabled
+        
+        # Publish tracking enable state
+        msg = Bool()
+        msg.data = self._tracking_enabled
+        self.pub_tracking_enable.publish(msg)
+        
+        if self._tracking_enabled:
+            self.get_logger().warning("[Tracking] 추적 모드 ON - 자동으로 타겟을 중앙으로 이동합니다")
+            self._tracking_centered_once = False  # Reset centered flag
+            self._no_move_count = 0  # Reset no-move counter
+            self._start_tracking_timer()
+        else:
+            self.get_logger().warning("[Tracking] 추적 모드 OFF")
+            self._stop_tracking_timer()
+            self._tracking_status = None
+            self._tracking_centered_once = False  # Reset centered flag
+            self._no_move_count = 0  # Reset no-move counter
+
+    def _toggle_ocr(self):
+        """Toggle OCR mode on/off."""
+        self._ocr_enabled = not self._ocr_enabled
+        
+        # Publish OCR enable state
+        msg = Bool()
+        msg.data = self._ocr_enabled
+        self.pub_ocr_enable.publish(msg)
+        
+        if self._ocr_enabled:
+            self.get_logger().warning("[OCR] OCR 모드 ON - 수식 인식을 시작합니다")
+        else:
+            self.get_logger().warning("[OCR] OCR 모드 OFF")
+
+    def _start_tracking_timer(self):
+        """Start the auto-tracking timer."""
+        if self._tracking_timer is not None:
+            self._tracking_timer.cancel()
+        self._tracking_timer = self.create_timer(
+            self._tracking_interval, self._tracking_timer_callback
+        )
+        self.get_logger().info(f"[Tracking] 자동 추적 타이머 시작 (간격: {self._tracking_interval}s)")
+
+    def _stop_tracking_timer(self):
+        """Stop the auto-tracking timer."""
+        if self._tracking_timer is not None:
+            self._tracking_timer.cancel()
+            self._tracking_timer = None
+            self.get_logger().info("[Tracking] 자동 추적 타이머 중지")
+
+    def _tracking_timer_callback(self):
+        """Timer callback for auto-tracking movement."""
+        import time
+        
+        if not self._tracking_enabled:
+            self._stop_tracking_timer()
+            return
+        
+        # Wait for previous move to complete
+        if self._tracking_move_pending:
+            self.get_logger().debug("[Tracking] 이전 이동 완료 대기 중...")
+            return
+        
+        # Wait for stabilization after move completion
+        if self._tracking_move_done_time is not None:
+            elapsed = time.time() - self._tracking_move_done_time
+            if elapsed < self._tracking_stabilize_time:
+                self.get_logger().debug(f"[Tracking] 안정화 대기 중... ({elapsed:.1f}/{self._tracking_stabilize_time}s)")
+                return
+            else:
+                # Stabilization complete, clear the flag
+                self._tracking_move_done_time = None
+                self.get_logger().info("[Tracking] 안정화 완료 - 새 위치 확인")
+        
+        if self._tracking_status is None:
+            self.get_logger().debug("[Tracking] 추적 상태 대기 중...")
+            return
+        
+        status = self._tracking_status
+        
+        if not status.get('detected', False):
+            self.get_logger().debug("[Tracking] 타겟 미감지 - 대기 중")
+            return
+        
+        if status.get('centered', False):
+            self.get_logger().info("[Tracking] ★ 타겟 중앙 정렬 완료! 추적 모드 자동 종료 ★")
+            self._toggle_tracking()
+            return
+        
+        # Execute tracking move
+        self._execute_tracking_move()
+
+    def _execute_tracking_move(self):
+        """
+        Execute a single tracking movement based on latest tracking status.
+        Called when user presses 'c' while tracking is enabled.
+        
+        Movement mapping (camera view to drone movement):
+        - offset_x > 0 (target is right) -> dy > 0 (move right)
+        - offset_y > 0 (target is below) -> dz > 0 (move down)
+        """
+        if self._tracking_status is None:
+            self.get_logger().warn("[Tracking] 추적 상태 없음 - YOLO 노드 확인 필요")
+            return
+        
+        status = self._tracking_status
+        
+        if not status.get('tracking_enabled', False):
+            self.get_logger().warn("[Tracking] 추적 모드가 YOLO에서 비활성화됨")
+            return
+        
+        if not status.get('detected', False):
+            self.get_logger().warn("[Tracking] 타겟이 감지되지 않음")
+            return
+        
+        # Get bbox info
+        bbox_width = status.get('bbox_width', 0.0)
+        bbox_height = status.get('bbox_height', 0.0)
+        bbox_area = status.get('bbox_area', 0.0)
+        bbox_aspect_ratio = status.get('bbox_aspect_ratio', 1.0)
+        
+        # Get normalized offsets (-1 to 1)
+        offset_x_norm = status.get('offset_x_normalized', 0.0)
+        offset_y_norm = status.get('offset_y_normalized', 0.0)
+        
+        # Log bbox info
+        self.get_logger().info(
+            f"[Tracking] bbox: {bbox_width:.0f}x{bbox_height:.0f}, "
+            f"area={bbox_area:.0f}, ratio={bbox_aspect_ratio:.2f}"
+        )
+        
+        # Phase 1: 먼저 좌우/상하 정렬 (dy, dz) - 한번 centered 되면 스킵
+        if not self._tracking_centered_once:
+            # centered는 dy==0, dz==0으로 판단
+            # Calculate movement (scale normalized offset to meters)
+            # 드론 좌표계: dy=좌우, dz=상하
+            dy = offset_x_norm * self._tracking_move_scale  # 좌우 (카메라 X offset)
+            dz = offset_y_norm * self._tracking_move_scale  # 상하 (카메라 Y offset)
+            
+            # Apply minimum threshold
+            if abs(dy) < self._tracking_min_move:
+                dy = 0.0
+            if abs(dz) < self._tracking_min_move:
+                dz = 0.0
+            
+            # Clamp to maximum
+            dy = max(-self._tracking_max_move, min(self._tracking_max_move, dy))
+            dz = max(-self._tracking_max_move, min(self._tracking_max_move, dz))
+            
+            # dy, dz가 0이 아니면 아직 정렬 중
+            if dy != 0.0 or dz != 0.0:
+                self.get_logger().info(
+                    f"[Tracking] 정렬 이동: dy={dy:.3f}m(좌우), dz={dz:.3f}m(상하) "
+                    f"(offset: x={offset_x_norm:.2f}, y={offset_y_norm:.2f})"
+                )
+                self._tracking_move_pending = True
+                self._publish_moveby(dx=0.0, dy=dy, dz=dz)  # dx=0 명시
+                return
+            
+            # dy==0, dz==0 이면 centered - 플래그 설정
+            self._tracking_centered_once = True
+            self.get_logger().info("[Tracking] ★ 좌우/상하 정렬 완료! 이제 앞뒤(dx)만 조절합니다 ★")
+        
+        # Phase 2: 중앙 정렬 완료 후 bbox 크기로 앞뒤(dx) 조절
+        # 목표: 270x200 ± 10%
+        width_min = self._target_bbox_width * (1.0 - self._bbox_tolerance)
+        width_max = self._target_bbox_width * (1.0 + self._bbox_tolerance)
+        height_min = self._target_bbox_height * (1.0 - self._bbox_tolerance)
+        height_max = self._target_bbox_height * (1.0 + self._bbox_tolerance)
+        
+        width_ok = width_min <= bbox_width <= width_max
+        height_ok = height_min <= bbox_height <= height_max
+        
+        if width_ok and height_ok:
+            # 모든 조건 충족 - 추적 완료!
+            self.get_logger().info(
+                f"[Tracking] ★ 완료! bbox={bbox_width:.0f}x{bbox_height:.0f} "
+                f"(목표: {self._target_bbox_width:.0f}x{self._target_bbox_height:.0f} ±{self._bbox_tolerance*100:.0f}%) ★"
+            )
+            self._toggle_tracking()
+            
+            # 추적 완료 시 자동으로 OCR 활성화
+            if not self._ocr_enabled:
+                self._ocr_enabled = True
+                msg = Bool()
+                msg.data = True
+                self.pub_ocr_enable.publish(msg)
+                self.get_logger().warning("[OCR] 추적 완료 → OCR 자동 활성화!")
+            return
+        
+        # bbox가 너무 작으면 앞으로(+dx), 너무 크면 뒤로(-dx)
+        dx = 0.0
+        if bbox_width < width_min or bbox_height < height_min:
+            dx = self._tracking_dx_step  # 앞으로 (가까이)
+            self.get_logger().info(
+                f"[Tracking] bbox 작음 → 앞으로 이동: dx={dx:.3f}m "
+                f"(현재: {bbox_width:.0f}x{bbox_height:.0f}, 목표: {width_min:.0f}~{width_max:.0f})"
+            )
+        elif bbox_width > width_max or bbox_height > height_max:
+            dx = -self._tracking_dx_step  # 뒤로 (멀리)
+            self.get_logger().info(
+                f"[Tracking] bbox 큼 → 뒤로 이동: dx={dx:.3f}m "
+                f"(현재: {bbox_width:.0f}x{bbox_height:.0f}, 목표: {width_min:.0f}~{width_max:.0f})"
+            )
+        
+        if dx != 0.0:
+            self._tracking_move_pending = True
+            self._publish_moveby(dx=dx, dy=0.0, dz=0.0)
 
     # ---------- 서비스 헬퍼 ----------
     def _call_trigger_async(self, client, name: str):
@@ -258,6 +570,10 @@ class AnafiMoveByKeyboard(Node):
 
     # ---------- MoveBy 발행 ----------
     def _publish_moveby(self, dx=0.0, dy=0.0, dz=0.0, dyaw=0.0):
+        # Save current position before move for verification
+        if self._current_position is not None:
+            self._position_before_move = self._current_position
+        
         msg = MoveByCommand()
         msg.dx = float(dx)
         msg.dy = float(dy)
@@ -273,6 +589,18 @@ class AnafiMoveByKeyboard(Node):
         ch = self._kb.getch()
         if ch is None:
             return
+
+        # 추적 모드 중 다른 키가 눌리면 즉시 중지 (c/C 제외)
+        if self._tracking_enabled and ch not in ('c', 'C'):
+            self.get_logger().warning(f"[Tracking] 키 '{ch}' 입력 - 추적 모드 중지")
+            self._tracking_enabled = False
+            self._stop_tracking_timer()
+            # YOLO에도 추적 비활성화 알림
+            msg = Bool()
+            msg.data = False
+            self.pub_tracking_enable.publish(msg)
+            self._tracking_status = None
+            # 키 입력은 계속 처리
 
         turbo = ch.isupper()
         lin = self.lin_step * (self.turbo_multiplier if turbo else 1.0)
@@ -336,6 +664,17 @@ class AnafiMoveByKeyboard(Node):
             self.get_logger().warning("[키보드] offboard 토글 요청 (o)")
             # 간단하게 토글만, 실제 상태는 응답 로그로 확인
             self._set_offboard(True)  # 필요하면 토글 상태를 멤버로 들고가도 됨
+        
+        # --- 추적 모드 ---
+        elif ch in ('c', 'C'):
+            # c 또는 C: 추적 모드 토글
+            self._toggle_tracking()
+        
+        # --- OCR 모드 ---
+        elif ch in ('n', 'N'):
+            # n 또는 N: OCR 토글
+            self._toggle_ocr()
+        
         elif ch == '?':
             self.get_logger().info(HELP_TEXT)
         # 그 외 키는 무시

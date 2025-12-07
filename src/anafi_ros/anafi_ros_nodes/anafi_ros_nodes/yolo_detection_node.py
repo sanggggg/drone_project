@@ -33,7 +33,7 @@ from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 
 from sensor_msgs.msg import Image, CompressedImage
-from std_msgs.msg import Header, String
+from std_msgs.msg import Header, String, Bool
 
 import numpy as np
 
@@ -116,7 +116,7 @@ class YoloDetectionNode(Node):
             raise RuntimeError("cv_bridge not available")
 
         # ---------- Parameters ----------
-        self.declare_parameter('model', 'yolov8n.engine')
+        self.declare_parameter('model', 'yolo11m_fhd.engine')
         self.declare_parameter('device', 'cuda')
         self.declare_parameter('confidence', 0.25)
         self.declare_parameter('inference_rate', 10)  # Hz
@@ -208,6 +208,13 @@ class YoloDetectionNode(Node):
         self._fps = 0.0
         self._fps_update_time = time.time()
         self._fps_frame_count = 0
+        
+        # ---------- Tracking State ----------
+        self._tracking_enabled = False  # Tracking mode enabled by keyboard
+        self._target_detected = False   # Whether target is currently detected
+        self._image_width = 1920        # Will be updated from actual image
+        self._image_height = 1080
+        self._target_y_ratio = 0.62     # Target Y position: 62% from top (lower part of screen)
 
         # ---------- QoS Profiles ----------
         qos_image = _make_qos(depth=5, reliable=False)  # Best effort for image streaming
@@ -219,6 +226,23 @@ class YoloDetectionNode(Node):
             self.camera_topic,
             self._on_camera_image,
             qos_image
+        )
+        
+        # Tracking enable subscriber
+        self.sub_tracking_enable = self.create_subscription(
+            Bool,
+            'yolo/tracking_enable',
+            self._on_tracking_enable,
+            qos_detection
+        )
+        
+        # OCR enable subscriber (from keyboard controller)
+        self._ocr_enabled_by_key = False  # OCR enabled by 'n' key
+        self.sub_ocr_enable = self.create_subscription(
+            Bool,
+            'yolo/ocr_enable',
+            self._on_ocr_enable,
+            qos_detection
         )
 
         # ---------- Publishers ----------
@@ -236,6 +260,11 @@ class YoloDetectionNode(Node):
         # OCR publisher (Image)
         self.pub_ocr_image = self.create_publisher(
             Image, 'yolo/ocr_image', qos_image
+        )
+        
+        # Tracking status publisher (JSON with offset info)
+        self.pub_tracking_status = self.create_publisher(
+            String, 'yolo/tracking_status', qos_detection
         )
 
         # ---------- Logging ----------
@@ -258,6 +287,70 @@ class YoloDetectionNode(Node):
             self.get_logger().info(f"  OCR Timeout:      {self.ocr_timeout_sec}s")
             self.get_logger().info(f"  OCR Conf Thresh:  {self.ocr_confidence_threshold}%")
         self.get_logger().info("=" * 60)
+
+    def _on_tracking_enable(self, msg: Bool):
+        """Callback for tracking enable/disable from keyboard controller."""
+        self._tracking_enabled = msg.data
+        if self._tracking_enabled:
+            self.get_logger().info("[Tracking] Tracking mode ENABLED - searching for target...")
+        else:
+            self.get_logger().info("[Tracking] Tracking mode DISABLED")
+            self._target_detected = False
+
+    def _on_ocr_enable(self, msg: Bool):
+        """Callback for OCR enable/disable from keyboard controller ('n' key)."""
+        self._ocr_enabled_by_key = msg.data
+        if self._ocr_enabled_by_key:
+            self.get_logger().warning("[OCR] OCR mode ENABLED by keyboard ('n' key)")
+        else:
+            self.get_logger().warning("[OCR] OCR mode DISABLED by keyboard")
+
+    def _publish_tracking_status(self, detected: bool, 
+                                  offset_x: float = 0.0, offset_y: float = 0.0,
+                                  bbox_center_x: float = 0.0, bbox_center_y: float = 0.0,
+                                  bbox_width: float = 0.0, bbox_height: float = 0.0):
+        """
+        Publish tracking status as JSON.
+        
+        Args:
+            detected: Whether target is detected
+            centered: Whether target is centered in frame
+            offset_x: Horizontal offset from center (positive = target is right of center)
+            offset_y: Vertical offset from center (positive = target is below center)
+            bbox_center_x: Bounding box center X coordinate
+            bbox_center_y: Bounding box center Y coordinate
+            bbox_width: Bounding box width in pixels
+            bbox_height: Bounding box height in pixels
+        """
+        # Target position: X=center, Y=62% from top
+        target_x = self._image_width / 2.0
+        target_y = self._image_height * self._target_y_ratio
+        
+        # Calculate aspect ratio (width/height, 1.0 = square)
+        aspect_ratio = float(bbox_width / bbox_height) if bbox_height > 0 else 1.0
+        
+        status = {
+            "tracking_enabled": bool(self._tracking_enabled),
+            "detected": bool(detected),
+            "image_width": int(self._image_width),
+            "image_height": int(self._image_height),
+            "target_x": float(target_x),
+            "target_y": float(target_y),
+            "bbox_center_x": float(bbox_center_x),
+            "bbox_center_y": float(bbox_center_y),
+            "bbox_width": float(bbox_width),
+            "bbox_height": float(bbox_height),
+            "bbox_area": float(bbox_width * bbox_height),
+            "bbox_aspect_ratio": float(aspect_ratio),  # width/height, 1.0 = square
+            "offset_x": float(offset_x),  # Pixels from target (+ = right)
+            "offset_y": float(offset_y),  # Pixels from target (+ = below target)
+            "offset_x_normalized": float(offset_x / (self._image_width / 2.0)) if self._image_width > 0 else 0.0,
+            "offset_y_normalized": float(offset_y / (self._image_height / 2.0)) if self._image_height > 0 else 0.0,
+        }
+        
+        msg = String()
+        msg.data = json.dumps(status)
+        self.pub_tracking_status.publish(msg)
 
     def _on_camera_image(self, msg: Image):
         """
@@ -284,6 +377,8 @@ class YoloDetectionNode(Node):
         # Convert ROS Image to OpenCV format
         try:
             cv_image = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
+            # Update image dimensions
+            self._image_height, self._image_width = cv_image.shape[:2]
         except Exception as e:
             self.get_logger().error(f"Failed to convert image: {e}")
             return
@@ -297,7 +392,8 @@ class YoloDetectionNode(Node):
                 iou=self.iou_threshold,
                 max_det=self.max_detections,
                 classes=self.filter_classes if self.filter_classes else None,
-                verbose=False
+                verbose=False,
+                imgsz=[1088,1920]
             )
             self._inference_count += 1
         except Exception as e:
@@ -330,17 +426,15 @@ class YoloDetectionNode(Node):
             detection_msg.data = detections_json
             self.pub_detections.publish(detection_msg)
             
-            # Run OCR on detected regions or full image
-
-            # keep = []
-            # for i in range(len(result.boxes)):
-            #     cid = int(result.boxes.cls[i].cpu().numpy())
-            #     if cid == 62:  # 너가 원하는 class
-            #         keep.append(i)
-
-            # result.boxes = result.boxes[keep]
-
-            if self.ocr is not None:
+            # Process tracking if enabled
+            if self._tracking_enabled:
+                self._process_tracking(result)
+            
+            # Run OCR only when explicitly enabled by 'n' key from keyboard controller
+            # OCR is controlled by _ocr_enabled_by_key flag (set by 'n' key)
+            should_run_ocr = self._ocr_enabled_by_key
+            
+            if self.ocr is not None and should_run_ocr:
                 self._run_ocr(cv_image, result, msg.header)
             
             # Log periodically
@@ -351,6 +445,72 @@ class YoloDetectionNode(Node):
                     f"Inference #{self._inference_count}: {n_dets} detections, "
                     f"FPS: {self._fps:.1f}"
                 )
+
+    def _process_tracking(self, result):
+        """
+        Process YOLO detection results for tracking.
+        
+        Calculates offset from image center and publishes tracking status.
+        The keyboard controller will use this to move the drone.
+        """
+        has_detections = result.boxes is not None and len(result.boxes) > 0
+        
+        if not has_detections:
+            # No target detected
+            self._target_detected = False
+            self._publish_tracking_status(
+                detected=False
+            )
+            self.get_logger().info("[Tracking] No target detected")
+            return
+        
+        # Find the best detection (highest confidence)
+        boxes = result.boxes
+        best_idx = 0
+        best_conf = 0.0
+        
+        for i in range(len(boxes)):
+            conf = float(boxes.conf[i].cpu().numpy())
+            if conf > best_conf:
+                best_conf = conf
+                best_idx = i
+        
+        # Get bounding box info
+        box = boxes.xyxy[best_idx].cpu().numpy()
+        x1, y1, x2, y2 = box
+        bbox_center_x = (x1 + x2) / 2.0
+        bbox_center_y = (y1 + y2) / 2.0
+        bbox_width = x2 - x1
+        bbox_height = y2 - y1
+        bbox_area = bbox_width * bbox_height
+        aspect_ratio = bbox_width / bbox_height if bbox_height > 0 else 1.0
+        
+        # Calculate offset from target position
+        # X: center of image (50%)
+        # Y: lower part of image (62% from top, i.e., 35-40% from bottom)
+        target_x = self._image_width / 2.0
+        target_y = self._image_height * self._target_y_ratio
+        
+        offset_x = bbox_center_x - target_x  # + = target is right of center
+        offset_y = bbox_center_y - target_y  # + = target is below target position
+        
+        # NOTE: centered 판단은 keyboard controller에서 dy,dz==0으로 판단
+        self._target_detected = True
+        
+        # Publish tracking status
+        self._publish_tracking_status(
+            detected=True,
+            offset_x=offset_x,
+            offset_y=offset_y,
+            bbox_center_x=bbox_center_x,
+            bbox_center_y=bbox_center_y,
+            bbox_width=bbox_width,
+            bbox_height=bbox_height
+        )
+        
+        self.get_logger().info(
+            f"[Tracking] offset: x={offset_x:.1f}, y={offset_y:.1f} | bbox: {bbox_width:.0f}x{bbox_height:.0f}, area={bbox_area:.0f}, ratio={aspect_ratio:.2f}"
+        )
 
     def _draw_info(self, img: np.ndarray):
         """Draw FPS and other info on the image."""
