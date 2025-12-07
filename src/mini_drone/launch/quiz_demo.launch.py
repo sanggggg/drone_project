@@ -8,7 +8,18 @@ Quiz Demo Launch File
   4. quiz_controller - 상태 머신 기반 퀴즈 컨트롤러
 
 사용법:
+  # 기본 실행 (team namespace 없음)
   ros2 launch mini_drone quiz_demo.launch.py
+
+  # Team namespace 지정 (멀티 로봇)
+  ros2 launch mini_drone quiz_demo.launch.py team:=team9
+  ros2 launch mini_drone quiz_demo.launch.py team:=team11
+
+  # 두 팀 동시 실행 예시 (별도 터미널에서)
+  # Terminal 1:
+  ros2 launch mini_drone quiz_demo.launch.py team:=team9 uri:='radio://0/80/2M/E7E7E7E709' anafi_ip:='192.168.53.1'
+  # Terminal 2:
+  ros2 launch mini_drone quiz_demo.launch.py team:=team11 uri:='radio://0/90/2M/E7E7E7E711' anafi_ip:='192.168.54.1'
 
   # Mini drone만 테스트 (ANAFI 없이)
   ros2 launch mini_drone quiz_demo.launch.py mini_only_mode:=true
@@ -24,25 +35,46 @@ Quiz Demo Launch File
 
   # Crazyflie URI 변경 예시
   ros2 launch mini_drone quiz_demo.launch.py uri:='radio://0/80/2M/E7E7E7E709'
+
+Topic Structure (with team namespace, e.g., team=team9):
+  /team9/anafi/...              - ANAFI drone topics (camera/image, drone/state, etc.)
+  /team9/cf/...                 - Crazyflie drone topics (odom, hl/takeoff, etc.)
+  /team9/quiz/...               - Quiz controller topics (state, command, answer, beep)
+  /team9/yolo/...               - YOLO detection outputs (image, detections, etc.)
+
+Without team namespace (team=''):
+  /anafi/...                    - ANAFI drone topics
+  /cf/...                       - Crazyflie drone topics
+  /quiz/...                     - Quiz controller topics
+  /yolo/...                     - YOLO detection outputs
 """
 
 import os
 
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
-from launch.substitutions import LaunchConfiguration
-from launch_ros.actions import Node
+from launch.actions import DeclareLaunchArgument, GroupAction
+from launch.substitutions import LaunchConfiguration, PythonExpression
+from launch_ros.actions import Node, PushRosNamespace
 from ament_index_python.packages import get_package_share_directory
 
 
 def generate_launch_description():
+    # ==========================================================================
+    # Team Namespace Argument
+    # ==========================================================================
+    team_arg = DeclareLaunchArgument(
+        'team',
+        default_value='',
+        description='Team namespace (e.g., team9, team11). Empty for no team namespace.'
+    )
+
     # ==========================================================================
     # ANAFI Launch Arguments
     # ==========================================================================
     anafi_namespace_arg = DeclareLaunchArgument(
         'anafi_namespace',
         default_value='anafi',
-        description='Namespace for ANAFI drone'
+        description='Namespace for ANAFI drone (within team namespace)'
     )
 
     anafi_ip_arg = DeclareLaunchArgument(
@@ -194,10 +226,14 @@ def generate_launch_description():
 
     # ==========================================================================
     # YOLO Detection Node
+    # At team root level (no extra namespace) for proper cross-namespace access
+    # All topics are relative to team namespace:
+    #   - anafi/camera/image → /<team>/anafi/camera/image
+    #   - quiz/* → /<team>/quiz/*
+    #   - yolo/* → /<team>/yolo/* (published topics)
     # ==========================================================================
     yolo_detection_node = Node(
         package='anafi_ros_nodes',
-        namespace=LaunchConfiguration('anafi_namespace'),
         executable='yolo_detection',
         name='yolo_detection',
         output='screen',
@@ -207,7 +243,7 @@ def generate_launch_description():
             'confidence': LaunchConfiguration('yolo_confidence'),
             'inference_rate': LaunchConfiguration('yolo_inference_rate'),
             'publish_compressed': LaunchConfiguration('yolo_publish_compressed'),
-            'camera_topic': 'camera/image',
+            'camera_topic': 'anafi/camera/image',  # → /<team>/anafi/camera/image
             'iou_threshold': 0.45,
             'max_detections': 100,
             'classes': [62, 63],  # TV/monitor classes
@@ -217,15 +253,12 @@ def generate_launch_description():
             'ocr_timeout_sec': 4.0,
             'ocr_confidence_threshold': 90.0,
         }],
-        # Remap quiz topics to global namespace
-        remappings=[
-            ('quiz/state', '/quiz/state'),
-            ('quiz/answer', '/quiz/answer'),
-        ],
     )
 
     # ==========================================================================
     # Quiz Controller Node
+    # No namespace - sits at team root level to access sibling namespaces
+    # Topics: quiz/*, cf/*, anafi/* (all relative to team namespace)
     # ==========================================================================
     quiz_controller_node = Node(
         package='mini_drone',
@@ -255,33 +288,31 @@ def generate_launch_description():
             'mini_only_mode': LaunchConfiguration('mini_only_mode'),
             'vertical_mode': LaunchConfiguration('vertical_mode'),
         }],
-        # Remap to connect with correct namespaces
-        remappings=[
-            # Crazyflie topics (cf namespace)
-            ('cf/odom', '/cf/odom'),
-            ('cf/hl/takeoff', '/cf/hl/takeoff'),
-            ('cf/hl/land', '/cf/hl/land'),
-            ('cf/hl/goto', '/cf/hl/goto'),
-            ('cf/stop', '/cf/stop'),
-            ('cf/traj/run', '/cf/traj/run'),
-            # ANAFI topics (anafi namespace)
-            ('anafi/drone/state', '/anafi/drone/state'),
-            ('anafi/drone/takeoff', '/anafi/drone/takeoff'),
-            ('anafi/drone/land', '/anafi/drone/land'),
-            ('anafi/drone/emergency', '/anafi/drone/emergency'),
-            ('anafi/yolo/ocr_enable', '/anafi/yolo/ocr_enable'),
-            # Quiz topics (global)
-            ('quiz/answer', '/quiz/answer'),
-            ('quiz/command', '/quiz/command'),
-            ('quiz/state', '/quiz/state'),
-            ('quiz/beep', '/quiz/beep'),
-        ],
+        # No remappings needed - relative paths work within team namespace:
+        # quiz/answer → /<team>/quiz/answer
+        # cf/odom → /<team>/cf/odom
+        # anafi/drone/state → /<team>/anafi/drone/state
     )
+
+    # ==========================================================================
+    # Group all nodes under team namespace
+    # ==========================================================================
+    # PushRosNamespace will prepend the team namespace to all nodes in the group
+    # If team is empty, nodes will be at root level
+    team_group = GroupAction([
+        PushRosNamespace(LaunchConfiguration('team')),
+        anafi_node,
+        cf_bridge_node,
+        yolo_detection_node,
+        quiz_controller_node,
+    ])
 
     return LaunchDescription([
         # ==========================================================================
         # Launch Arguments
         # ==========================================================================
+        # Team namespace
+        team_arg,
         # ANAFI arguments
         anafi_namespace_arg,
         anafi_ip_arg,
@@ -305,10 +336,7 @@ def generate_launch_description():
         vertical_mode_arg,
 
         # ==========================================================================
-        # Nodes
+        # Node Group (with team namespace)
         # ==========================================================================
-        anafi_node,
-        cf_bridge_node,
-        yolo_detection_node,
-        quiz_controller_node,
+        team_group,
     ])
