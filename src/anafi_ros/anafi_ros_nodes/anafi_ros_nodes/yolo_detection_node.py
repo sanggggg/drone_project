@@ -61,7 +61,8 @@ except ImportError:
 try:
     from anafi_ros_nodes.ocr_utils import OCRProcessor, OCRBufferManager, crop_from_xyxy, validate_white_screen
     OCR_AVAILABLE = True
-except ImportError:
+except ImportError as e:
+    self.get_logger().info(f"OCR import error: {e}")
     OCR_AVAILABLE = False
 
 
@@ -201,7 +202,8 @@ class YoloDetectionNode(Node):
                 )
             else:
                 self.get_logger().warn("OCR requested but ocr_utils module not available")
-
+        else:
+            self.get_logger().info("[OCR] OCR disabled")
         # ---------- State ----------
         self._last_inference_time = 0.0
         self._frame_count = 0
@@ -336,7 +338,7 @@ class YoloDetectionNode(Node):
             self.get_logger().info(f"Preprocess time: {preprocess_time_ms:.2f} ms")
             self.get_logger().info(f"Postprocess time: {postprocess_time_ms:.2f} ms")
             self.get_logger().info(f"Total time: {inference_time_ms + preprocess_time_ms + postprocess_time_ms:.2f} ms")
-            
+            self.get_logger().info(f"self ocr enabled: {self.ocr is not None}")
             # Get annotated image with bboxes
             annotated_image = result.plot()
             
