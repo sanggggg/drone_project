@@ -230,7 +230,7 @@ class QuizControllerNode(Node):
         
         # OCR enable publisher (to YOLO node)
         self.pub_ocr_enable = self.create_publisher(
-            Bool, 'anafi/yolo/ocr_enable', qos_reliable
+            Bool, 'yolo/ocr_enable', qos_reliable
         )
 
         # ---- Timers ----
