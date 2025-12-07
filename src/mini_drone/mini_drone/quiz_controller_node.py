@@ -128,8 +128,16 @@ class QuizControllerNode(Node):
 
         # Answer → Trajectory 매핑
         self.answer_trajectory_map = {
-            "1": "figure8",
-            "2": "vertical_a",
+            "0": "figure0",
+            "1": "figure1",
+            "2": "figure2",
+            "3": "figure3",
+            "4": "figure4",
+            "5": "figure5",
+            "6": "figure6",
+            "7": "figure7",
+            "8": "figure8",
+            "9": "figure9",
         }
 
         # ---- QoS Profiles ----
