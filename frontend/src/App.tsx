@@ -20,6 +20,8 @@ function App() {
   // Track correct answers (increments when transitioning from DRAWING to IDLE)
   const [correctCount, setCorrectCount] = useState(0);
   const [prevState, setPrevState] = useState<string | null>(null);
+  const [detectingStartTime, setDetectingStartTime] = useState<Date | null>(null);
+  const [displayedAnswer, setDisplayedAnswer] = useState<string | null>(null);
 
   // Quiz State topic
   const { message: quizState, lastUpdate: quizStateUpdate } = useTopic<StringMsg>({
@@ -29,19 +31,32 @@ function App() {
     enabled: isConnected,
   });
 
-  // Track state changes to count correct answers
+  // Track state changes to count correct answers and manage answer display
   const currentState = quizState?.data || null;
-  if (currentState !== prevState) {
-    // If transitioning from DRAWING to IDLE, increment correct count
-    if (prevState === 'DRAWING' && currentState === 'IDLE') {
-      setCorrectCount((c) => c + 1);
+  useEffect(() => {
+    if (currentState !== prevState) {
+      // If transitioning from DRAWING to IDLE, increment correct count
+      if (prevState === 'DRAWING' && currentState === 'IDLE') {
+        setCorrectCount((c) => c + 1);
+      }
+      // Reset count on UNINIT
+      if (currentState === 'UNINIT') {
+        setCorrectCount(0);
+      }
+      
+      // Track when DETECTING state starts
+      if (currentState === 'DETECTING') {
+        setDetectingStartTime(new Date());
+        setDisplayedAnswer(null); // Clear previous answer when entering DETECTING
+      } else {
+        // Clear answer when leaving DETECTING state
+        setDetectingStartTime(null);
+        setDisplayedAnswer(null);
+      }
+      
+      setPrevState(currentState);
     }
-    // Reset count on UNINIT
-    if (currentState === 'UNINIT') {
-      setCorrectCount(0);
-    }
-    setPrevState(currentState);
-  }
+  }, [currentState, prevState]);
 
   // Quiz Answer topic
   const { message: quizAnswer, lastUpdate: quizAnswerUpdate } = useTopic<StringMsg>({
@@ -50,6 +65,21 @@ function App() {
     messageType: 'std_msgs/String',
     enabled: isConnected,
   });
+
+  // Only show answers that come after entering DETECTING state
+  useEffect(() => {
+    if (currentState === 'DETECTING') {
+      if (quizAnswer?.data && detectingStartTime && quizAnswerUpdate) {
+        // Only show answer if it arrived after we entered DETECTING state
+        if (quizAnswerUpdate >= detectingStartTime) {
+          setDisplayedAnswer(quizAnswer.data);
+        }
+      }
+    } else {
+      // Clear answer when not in DETECTING state
+      setDisplayedAnswer(null);
+    }
+  }, [quizAnswer, quizAnswerUpdate, currentState, detectingStartTime]);
 
   // Crazyflie Odometry topic
   const { message: cfOdom, lastUpdate: cfOdomUpdate } = useTopic<Odometry>({
@@ -250,7 +280,8 @@ function App() {
               lastUpdate={quizStateUpdate}
             />
             <QuizAnswerDisplay
-              answer={quizAnswer?.data || null}
+              answer={currentState === 'DETECTING' ? displayedAnswer : null}
+              currentState={currentState}
               lastUpdate={quizAnswerUpdate}
             />
             <QuizStatsDisplay
