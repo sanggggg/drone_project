@@ -28,6 +28,7 @@ setup(
             'cf_bridge = mini_drone.cf_bridge_node:main',
             'cf_keyboard_control_node = mini_drone.cf_keyboard_control_node:main',
             'quiz_controller = mini_drone.quiz_controller_node:main',
+            'quiz_keyboard_console = mini_drone.quiz_keyboard_console_node:main',
         ],
     },
 )
