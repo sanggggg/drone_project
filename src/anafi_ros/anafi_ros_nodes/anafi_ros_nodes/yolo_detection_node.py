@@ -11,6 +11,7 @@
 #     /anafi/yolo/detections      (std_msgs/String)    - Detection results as JSON
 #     /anafi/yolo/image/compressed (sensor_msgs/CompressedImage)  - Compressed annotated image
 #     /anafi/yolo/ocr_image       (sensor_msgs/Image)  - Preprocessed images used for OCR
+#     /quiz/answer                (std_msgs/String)    - OCR result (quiz answer)
 #
 # Parameters:
 #     model           : YOLO model path or name (default: yolov8n.pt)
@@ -237,6 +238,11 @@ class YoloDetectionNode(Node):
         self.pub_ocr_image = self.create_publisher(
             Image, 'yolo/ocr_image', qos_image
         )
+        
+        # Quiz answer publisher (String) - absolute topic path to avoid namespace
+        self.pub_quiz_answer = self.create_publisher(
+            String, '/quiz/answer', qos_detection
+        )
 
         # ---------- Logging ----------
         self.get_logger().info("=" * 60)
@@ -251,6 +257,7 @@ class YoloDetectionNode(Node):
         self.get_logger().info(f"  Annotated Topic:  /anafi/yolo/image")
         self.get_logger().info(f"  Detections Topic: /anafi/yolo/detections (JSON)")
         self.get_logger().info(f"  OCR Topic:        /anafi/yolo/ocr_image")
+        self.get_logger().info(f"  Quiz Answer Topic: /quiz/answer")
         self.get_logger().info(f"  OCR Enabled:      {self.ocr_enabled and self.ocr is not None}")
         if self.ocr_enabled and self.ocr:
             self.get_logger().info(f"  OCR Classes:      {self.ocr_classes if self.ocr_classes else 'all/full image'}")
@@ -477,6 +484,11 @@ class YoloDetectionNode(Node):
                 processed, mode_result = self.ocr_buffer.check_timeout()
                 if processed and mode_result:
                     self.get_logger().info(f"[OCR] ★★★ FINAL RESULT (timeout): '{mode_result}' ★★★")
+                    # Publish to /quiz/answer topic
+                    answer_msg = String()
+                    answer_msg.data = mode_result
+                    self.pub_quiz_answer.publish(answer_msg)
+                    self.get_logger().info(f"[OCR] Published answer to /quiz/answer: '{mode_result}'")
             return
         
         # Process detected regions
@@ -515,6 +527,11 @@ class YoloDetectionNode(Node):
                     if should_process and mode_result:
                         # Batch processing completed, log final result
                         self.get_logger().info(f"[OCR] ★★★ FINAL RESULT: '{mode_result}' ★★★")
+                        # Publish to /quiz/answer topic
+                        answer_msg = String()
+                        answer_msg.data = mode_result
+                        self.pub_quiz_answer.publish(answer_msg)
+                        self.get_logger().info(f"[OCR] Published answer to /quiz/answer: '{mode_result}'")
                     
                     # Publish cropped image for visualization
                     try:
