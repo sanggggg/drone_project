@@ -3,14 +3,16 @@ Quiz Demo Launch File
 
 전체 퀴즈 데모 시스템을 실행합니다:
   1. cf_bridge - Crazyflie 텔레메트리 및 제어 브리지
-  2. ai_deck_camera - AI-Deck 카메라 스트리밍
-  3. quiz_controller - 상태 머신 기반 퀴즈 컨트롤러
+  2. quiz_controller - 상태 머신 기반 퀴즈 컨트롤러
 
 사용법:
   ros2 launch mini_drone quiz_demo.launch.py
 
   # Mini drone만 테스트 (ANAFI 없이)
   ros2 launch mini_drone quiz_demo.launch.py mini_only_mode:=true
+
+  # 수직 모드
+  ros2 launch mini_drone quiz_demo.launch.py vertical_mode:=True
 
   # 파라미터 변경 예시
   ros2 launch mini_drone quiz_demo.launch.py operation_timeout_min:=3.0
@@ -51,6 +53,12 @@ def generate_launch_description():
         description='Test with Mini drone only (skip ANAFI). In DETECTING state, press 1/2 for manual answer.'
     )
 
+    vertical_mode_arg = DeclareLaunchArgument(
+        'vertical_mode',
+        default_value='False',
+        description='Vertical mode (True: vertical, False: horizontal)'
+    )
+
     # Crazyflie Bridge Node
     cf_bridge_node = Node(
         package='mini_drone',
@@ -67,26 +75,13 @@ def generate_launch_description():
             'hl_goto_duration_s': 5.1,
         }],
     )
-
-    # AI-Deck Camera Node (optional - comment out if not using camera)
-    # ai_deck_camera_node = Node(
-    #     package='mini_drone',
-    #     executable='ai_deck_camera',
-    #     name='ai_deck_camera',
-    #     output='screen',
-    #     parameters=[{
-    #         'host': '192.168.4.1',
-    #         'port': 5000,
-    #     }],
-    # )
-
     # Quiz Controller Node
     quiz_controller_node = Node(
         package='mini_drone',
         executable='quiz_controller',
         name='quiz_controller',
         output='screen',
-        prefix='xterm -e',  # 별도 터미널에서 실행 (키보드 입력용)
+        # prefix='xterm -e',  # 별도 터미널에서 실행 (키보드 입력용)
         parameters=[{
             # Mini drone 홈 위치
             'mini_home_x': 0.0,
@@ -108,6 +103,7 @@ def generate_launch_description():
             'home_yaw_tolerance_deg': 15.0,
             # Mini only mode
             'mini_only_mode': LaunchConfiguration('mini_only_mode'),
+            'vertical_mode': LaunchConfiguration('vertical_mode'),
         }],
     )
 
@@ -117,9 +113,9 @@ def generate_launch_description():
         mini_home_z_arg,
         uri_arg,
         mini_only_mode_arg,
+        vertical_mode_arg,
         # Nodes
         cf_bridge_node,
-        # ai_deck_camera_node,
         quiz_controller_node,
     ])
 

@@ -1,0 +1,133 @@
+.odometry {
+  display: flex;
+  gap: 0.75rem;
+  align-items: stretch;
+}
+
+.odometry__data {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.odometry__section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.odometry__section-title {
+  margin: 0;
+  font-size: 0.5rem;
+  color: #6a8090;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-weight: 500;
+}
+
+.odometry__grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.3rem;
+}
+
+.odometry__item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.1rem;
+  padding: 0.25rem;
+  background: rgba(40, 50, 70, 0.4);
+  border-radius: 5px;
+  border: 1px solid rgba(100, 140, 180, 0.1);
+}
+
+.odometry__label {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 0.45rem;
+  color: #6a8090;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.odometry__value {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #e0e8f0;
+}
+
+.odometry__value--x { color: #ff6b6b; }
+.odometry__value--y { color: #4ecdc4; }
+.odometry__value--z { color: #45b7d1; }
+
+.odometry__divider {
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(100, 140, 180, 0.15), transparent);
+}
+
+.odometry__visual {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.25rem;
+  flex-shrink: 0;
+}
+
+.odometry__crosshair {
+  width: 60px;
+  height: 60px;
+  position: relative;
+  background: 
+    radial-gradient(circle at center, rgba(100, 180, 255, 0.05) 0%, transparent 70%),
+    linear-gradient(rgba(60, 80, 100, 0.12) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(60, 80, 100, 0.12) 1px, transparent 1px);
+  background-size: 100% 100%, 8px 8px, 8px 8px;
+  border-radius: 50%;
+  border: 1px solid rgba(100, 140, 180, 0.2);
+}
+
+.odometry__axis {
+  position: absolute;
+  background: rgba(100, 140, 180, 0.25);
+}
+
+.odometry__axis--x {
+  top: 50%;
+  left: 0;
+  right: 0;
+  height: 1px;
+  transform: translateY(-50%);
+}
+
+.odometry__axis--y {
+  left: 50%;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  transform: translateX(-50%);
+}
+
+.odometry__position-dot {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 6px;
+  height: 6px;
+  margin: -3px 0 0 -3px;
+  background: #00ff88;
+  border-radius: 50%;
+  box-shadow: 0 0 10px #00ff88;
+  transition: transform 0.15s ease-out;
+}
+
+.odometry__altitude {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 0.55rem;
+  color: #45b7d1;
+  padding: 0.15rem 0.35rem;
+  background: rgba(69, 183, 209, 0.1);
+  border-radius: 3px;
+  border: 1px solid rgba(69, 183, 209, 0.2);
+}

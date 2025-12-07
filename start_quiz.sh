@@ -1,0 +1,2 @@
+ros2 launch mini_drone quiz_demo.launch.py
+ros2 launch rosbridge_server rosbridge_websocket_launch.xml

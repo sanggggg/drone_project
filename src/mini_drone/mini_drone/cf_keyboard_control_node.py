@@ -20,6 +20,7 @@ from std_srvs.srv import Trigger
 from std_msgs.msg import Float32
 from geometry_msgs.msg import PoseStamped, TwistStamped
 from mini_drone_interfaces.srv import RunTrajectory
+from mini_drone.waypoint_executor import WaypointExecutor
 
 def quat_to_yaw(qx, qy, qz, qw):
     """Quaternion -> yaw (rad)"""
@@ -130,6 +131,14 @@ class CfKeyboardTeleop(Node):
 
         self._print_help()
 
+
+    def has_odom(self):
+        with self._lock:
+            return self._have_odom
+
+    def get_odom(self):
+        with self._lock:
+            return self._x, self._y, self._z, self._yaw
     # ---------- Callbacks ----------
     def _odom_cb(self, msg: Odometry):
         with self._lock:
@@ -247,6 +256,113 @@ class CfKeyboardTeleop(Node):
 
         future.add_done_callback(_done_cb)
 
+    def _wait_for_position(self, target_x, target_y, target_z, tolerance=0.15, timeout=10.0):
+        """목표 위치에 도착할 때까지 대기 (odom 모니터링)
+
+        Returns:
+            True: 목표 위치 도착
+            False: 타임아웃 또는 emergency stop 발생
+        """
+        start_time = time.monotonic()
+        while time.monotonic() - start_time < timeout:
+            if self._seq_stop_event.is_set():
+                self.get_logger().info('Emergency stop detected during position wait')
+                return False  # emergency stop으로 인한 중단
+            
+            with self._lock:
+                if not self._have_odom:
+                    time.sleep(0.1)
+                    continue
+                
+                dx = abs(self._x - target_x)
+                dy = abs(self._y - target_y)
+                dz = abs(self._z - target_z)
+                
+                if dx < tolerance and dy < tolerance and dz < tolerance:
+                    return True
+            
+            time.sleep(0.1)
+        
+        self.get_logger().warn(f'Timeout waiting for position ({target_x:.2f}, {target_y:.2f}, {target_z:.2f})')
+        return False
+
+    def _run_waypoint_sequence(self):
+        """Waypoint 시퀀스를 별도 스레드에서 실행"""
+        if self._seq_running:
+            self.get_logger().warn('Waypoint sequence already running')
+            return
+        
+        def _sequence_thread():
+            self._seq_running = True
+            self._seq_stop_event.clear()
+            
+            try:
+                # odom 확인
+                with self._lock:
+                    if not self._have_odom:
+                        self.get_logger().error('No odom available, cannot run waypoint sequence')
+                        return
+                    current_z = self._z
+                    current_yaw = self._yaw
+                
+                # 처음에 3초 대기
+                self.get_logger().info('Waiting 3 seconds before starting...')
+                for i in range(30):  # 0.1초씩 30번 = 3초
+                    if self._seq_stop_event.is_set():
+                        return
+                    time.sleep(0.1)
+                
+                # Waypoint 리스트 정의 (x, y, z, yaw, wait_time)
+                # z와 yaw는 현재 값 유지
+                waypoints = [
+                    (0.0, 0.0, current_z, current_yaw, 0),      # (0, 0)
+                    (-1.0, 0.0, current_z, current_yaw, 0),     # (-1, 0)
+                    (-1.0, -1.0, current_z, current_yaw, 0),    # (-1, -1)
+                    (0.0, -1.0, current_z, current_yaw, 0),     # (0, -1)
+                    (0.0, -2.0, current_z, current_yaw, 0),      # (0, -2)
+                    (-1.0, -2.0, current_z, current_yaw, 3),    # (-1, -2) - 여기서 3초 대기
+                    (0.0, 0.0, current_z, current_yaw, 0),       # (0, 0) - 돌아옴
+                ]
+                
+                for idx, (wx, wy, wz, wyaw, wait_time) in enumerate(waypoints):
+                    if self._seq_stop_event.is_set():
+                        self.get_logger().info('Waypoint sequence stopped by user')
+                        return
+                    
+                    self.get_logger().info(f'Waypoint {idx+1}/{len(waypoints)}: ({wx:.1f}, {wy:.1f}, {wz:.2f})')
+                    self._send_goto(wx, wy, wz, wyaw)
+                    
+                    # 목표 위치 도착 대기
+                    reached = self._wait_for_position(wx, wy, wz)
+                    
+                    # emergency stop 확인
+                    if self._seq_stop_event.is_set():
+                        self.get_logger().warn('Waypoint sequence stopped by emergency stop')
+                        return
+                    
+                    if not reached:
+                        self.get_logger().warn(f'Failed to reach waypoint {idx+1}, continuing...')
+                    
+                    # 특정 waypoint에서 추가 대기 시간
+                    if wait_time > 0:
+                        self.get_logger().info(f'Waiting {wait_time} seconds at waypoint {idx+1}...')
+                        for _ in range(int(wait_time * 10)):  # 0.1초씩
+                            if self._seq_stop_event.is_set():
+                                self.get_logger().warn('Waypoint sequence stopped by emergency stop during wait')
+                                return
+                            time.sleep(0.1)
+                
+                self.get_logger().info('Waypoint sequence completed!')
+                
+            except Exception as e:
+                self.get_logger().error(f'Waypoint sequence error: {e}')
+            finally:
+                self._seq_running = False
+        
+        thread = threading.Thread(target=_sequence_thread, daemon=True)
+        thread.start()
+
+
     # ---------- Keyboard ----------
     def _get_key(self, timeout=0.1):
         """non-blocking key read (Linux 전용)"""
@@ -261,7 +377,7 @@ class CfKeyboardTeleop(Node):
         fd = sys.stdin.fileno()
         old_settings = termios.tcgetattr(fd)
         try:
-            tty.setraw(fd)
+            tty.setcbreak(fd)
             self.get_logger().info('Keyboard teleop started. Press h for help.')
 
             while rclpy.ok():
@@ -284,13 +400,13 @@ class CfKeyboardTeleop(Node):
         # 'h' : 홈 포지션 (0, 0, 0.4m, yaw=0) 으로 이동
         if key == 'h':
             self.get_logger().info('[KEY] Come home → (x=0, y=0, z=0.4, yaw=0deg)')
-            self._send_goto(0.0, 0.0, 0.4, 0.0)
+            self._send_goto(0.0, 0.0, 0.5, 0.0)
             return
 
         if key == 't':
             self.get_logger().info('[KEY] Takeoff')
             msg = Float32()
-            msg.data = 0.5  # 원하는 takeoff 높이(m)
+            msg.data = 1.4  # 원하는 takeoff 높이(m)
             self.pub_takeoff.publish(msg)
             return
 
@@ -310,18 +426,64 @@ class CfKeyboardTeleop(Node):
             self._call_trigger_async(self.cli_emerg, '/cf/emergency_stop')
             return
 
-        # 3번 키: Figure 8 실행
+        if key == '0':
+            self.get_logger().info('[KEY] 0: Running Figure 0...')
+            self._call_trajectory_async('figure0')
+            return
+
+        if key == '1':
+            self.get_logger().info('[KEY] 1: Running Figure 1...')
+            self._call_trajectory_async('figure1')
+            return
+
+        if key == '2':
+            self.get_logger().info('[KEY] 2: Running Figure 2...')
+            self._send_goto(self._x, self._y, self._z+1.0, self._yaw)  # 현재 위치로 고정
+            self.waypoint_exec = WaypointExecutor(
+                send_goto=self._send_goto,
+                get_odom=self.get_odom,
+                has_odom=self.has_odom,
+                logger=self.get_logger()
+            )
+            self.waypoint_exec.run_sequence(['0', '1' ,'2','3','4','5','6','7', '8', '9'])
+            #self._call_trajectory_async('figure2')
+            return
+
         if key == '3':
-            self.get_logger().info('[KEY] 3: Running Figure 8...')
+            self.get_logger().info('[KEY] 3: Running Figure 3...')
+            self._call_trajectory_async('figure3')
+            return
+
+        if key == '4':
+            self.get_logger().info('[KEY] 4: Running Figure 4...')
+            self._call_trajectory_async('figure4')
+            return
+
+        if key == '5':
+            self.get_logger().info('[KEY] 5: Running Figure 5...')
+            self._call_trajectory_async('figure5')
+            return
+
+        if key == '6':
+            self.get_logger().info('[KEY] 6: Running Figure 6...')
+            self._call_trajectory_async('figure6')
+            return
+
+        if key == '7':
+            self.get_logger().info('[KEY] 7: Running Figure 7...')
+            self._call_trajectory_async('figure7')
+            return
+
+        if key == '8':
+            self.get_logger().info('[KEY] 8: Running Figure 8...')
             self._call_trajectory_async('figure8')
             return
 
-        # 4번 키: Vertical A 실행
-        if key == '4':
-            self.get_logger().info('[KEY] 4: Running Vertical A...')
-            self._call_trajectory_async('vertical_a')
+        if key == '9':
+            self.get_logger().info('[KEY] 9: Running Figure 9...')
+            self._call_trajectory_async('figure9')
             return
-            
+
         # 위치 기반 명령은 odom 있어야 함
         with self._lock:
             if not self._have_odom:
@@ -390,7 +552,7 @@ q/e     : yaw left/right (step_yaw_deg)
 h       : come home (x=0, y=0, z=0.4m, yaw=0deg)
 
 3       : run Figure 8 trajectory
-4       : run Vertical A trajectory
+4       : run 5 trajectory
 
 Ctrl+C  : exit
 =====================================

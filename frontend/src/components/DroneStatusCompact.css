@@ -1,0 +1,111 @@
+.drone-compact {
+  display: flex;
+  align-items: stretch;
+  gap: 0.5rem;
+  padding: 0.5rem 0.6rem;
+  background: linear-gradient(145deg, rgba(25, 30, 45, 0.95), rgba(15, 20, 35, 0.98));
+  border: 1px solid rgba(100, 180, 255, 0.12);
+  border-radius: 8px;
+}
+
+.drone-compact__item {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.drone-compact__header {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.drone-compact__icon {
+  font-size: 0.75rem;
+}
+
+.drone-compact__name {
+  font-family: 'Orbitron', 'Rajdhani', sans-serif;
+  font-size: 0.55rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #a0b0c0;
+}
+
+.drone-compact__status {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  margin-left: auto;
+}
+
+.drone-compact__status.online {
+  background: #00ff88;
+  box-shadow: 0 0 6px #00ff88;
+}
+
+.drone-compact__status.offline {
+  background: #ff4466;
+  box-shadow: 0 0 6px #ff4466;
+}
+
+.drone-compact__data {
+  display: flex;
+  gap: 0.35rem;
+}
+
+.drone-compact__field {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 0.2rem 0.25rem;
+  background: rgba(40, 50, 70, 0.4);
+  border-radius: 4px;
+  min-width: 36px;
+}
+
+.drone-compact__label {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 0.4rem;
+  color: #6a8090;
+  text-transform: uppercase;
+}
+
+.drone-compact__value {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 0.6rem;
+  font-weight: 600;
+  color: #e0e8f0;
+}
+
+.drone-compact__value--x { color: #ff6b6b; }
+.drone-compact__value--y { color: #4ecdc4; }
+.drone-compact__value--z { color: #45b7d1; }
+
+.drone-compact__divider {
+  width: 1px;
+  background: linear-gradient(180deg, transparent, rgba(100, 140, 180, 0.2), transparent);
+}
+
+.drone-compact__state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+}
+
+.drone-compact__state-badge {
+  font-family: 'Orbitron', 'Rajdhani', sans-serif;
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--state-color);
+  padding: 0.2rem 0.5rem;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid var(--state-color);
+  border-radius: 4px;
+  text-shadow: 0 0 10px var(--state-color);
+}
+

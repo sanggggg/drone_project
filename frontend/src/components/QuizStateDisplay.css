@@ -1,0 +1,114 @@
+.quiz-state {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.25rem 0;
+  overflow: hidden;
+}
+
+.quiz-state__visual {
+  position: relative;
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.quiz-state__icon {
+  font-size: 1.1rem;
+  color: var(--state-color);
+  z-index: 2;
+  text-shadow: 0 0 15px var(--state-color);
+}
+
+.quiz-state__ring {
+  position: absolute;
+  inset: 3px;
+  border-radius: 50%;
+  border: 1.5px solid var(--state-color);
+  opacity: 0.4;
+  animation: ringPulse 3s ease-in-out infinite;
+}
+
+.quiz-state__ring--outer {
+  inset: -3px;
+  opacity: 0.2;
+  animation-delay: -1.5s;
+}
+
+@keyframes ringPulse {
+  0%, 100% { transform: scale(1); opacity: 0.4; }
+  50% { transform: scale(1.08); opacity: 0.2; }
+}
+
+.quiz-state__info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.quiz-state__value {
+  font-family: 'Orbitron', 'Rajdhani', sans-serif;
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-shadow: 0 0 20px currentColor;
+}
+
+.quiz-state__label {
+  font-size: 0.5rem;
+  color: #6a8090;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.quiz-state__flow {
+  display: flex;
+  align-items: center;
+  gap: 0.1rem;
+  flex-shrink: 0;
+}
+
+.quiz-state__step {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(60, 80, 100, 0.3);
+  border: 1px solid rgba(100, 140, 180, 0.2);
+  transition: all 0.3s ease;
+}
+
+.quiz-state__step.active {
+  background: rgba(var(--step-color-rgb, 100, 180, 255), 0.2);
+  border-color: var(--step-color);
+  box-shadow: 0 0 8px var(--step-color);
+  transform: scale(1.1);
+}
+
+.quiz-state__step.completed {
+  background: rgba(60, 80, 100, 0.5);
+  border-color: rgba(100, 180, 255, 0.4);
+}
+
+.quiz-state__step-icon {
+  font-size: 0.45rem;
+  color: #6a8090;
+}
+
+.quiz-state__step.active .quiz-state__step-icon {
+  color: var(--step-color);
+}
+
+.quiz-state__connector {
+  width: 8px;
+  height: 1px;
+  background: linear-gradient(90deg, rgba(100, 140, 180, 0.3), rgba(100, 140, 180, 0.1));
+}

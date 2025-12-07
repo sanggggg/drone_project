@@ -1,0 +1,200 @@
+/* ============================================
+   DRONE CONTROL DASHBOARD - Main Styles
+   Single Screen Compact Layout
+   ============================================ */
+
+.app {
+  min-height: 100vh;
+  max-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  overflow: hidden;
+}
+
+/* Background Effects */
+.app__background {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background: linear-gradient(
+    135deg,
+    #0a0e14 0%,
+    #0d1218 25%,
+    #101820 50%,
+    #0d1218 75%,
+    #0a0e14 100%
+  );
+}
+
+.app__grid-overlay {
+  position: absolute;
+  inset: 0;
+  background-image: 
+    linear-gradient(rgba(50, 80, 120, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(50, 80, 120, 0.03) 1px, transparent 1px);
+  background-size: 40px 40px;
+  mask-image: radial-gradient(ellipse at center, black 20%, transparent 70%);
+}
+
+.app__glow {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(100px);
+  opacity: 0.12;
+}
+
+.app__glow--1 {
+  width: 400px;
+  height: 400px;
+  background: #0066cc;
+  top: -150px;
+  right: -150px;
+}
+
+.app__glow--2 {
+  width: 350px;
+  height: 350px;
+  background: #00ccaa;
+  bottom: -100px;
+  left: -100px;
+}
+
+/* Header */
+.app__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.35rem 1rem;
+  background: linear-gradient(180deg, rgba(15, 20, 30, 0.95), rgba(15, 20, 30, 0.8));
+  border-bottom: 1px solid rgba(100, 150, 200, 0.1);
+  backdrop-filter: blur(10px);
+  flex-shrink: 0;
+}
+
+.app__logo {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.app__logo-icon {
+  font-size: 1.1rem;
+  color: #00d4ff;
+  text-shadow: 0 0 15px rgba(0, 212, 255, 0.5);
+  animation: logoRotate 10s linear infinite;
+}
+
+@keyframes logoRotate {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+.app__logo-text h1 {
+  margin: 0;
+  font-family: 'Orbitron', 'Rajdhani', sans-serif;
+  font-size: 0.85rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  background: linear-gradient(135deg, #e0e8f0, #a0b8d0);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.app__logo-subtitle {
+  font-size: 0.45rem;
+  color: #5a7090;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+/* Main Content */
+.app__main {
+  flex: 1;
+  padding: 0.5rem 0.75rem;
+  overflow: hidden;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.app__dashboard {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  flex: 1;
+  min-height: 0;
+  max-width: 1600px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+/* Dashboard Rows */
+.dashboard__row {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.dashboard__row--quiz {
+  flex-shrink: 0;
+}
+
+.dashboard__row--quiz > * {
+  flex: 1;
+}
+
+.dashboard__row--controls {
+  flex-shrink: 0;
+}
+
+.dashboard__row--controls > *:first-child {
+  flex: 1;
+}
+
+.dashboard__row--controls > *:last-child {
+  flex: 1.2;
+}
+
+.dashboard__row--camera {
+  flex: 1;
+  min-height: 0;
+}
+
+.dashboard__row--camera > * {
+  flex: 1;
+}
+
+/* Footer */
+.app__footer {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.25rem 1rem;
+  background: linear-gradient(180deg, rgba(15, 20, 30, 0.8), rgba(10, 14, 20, 0.95));
+  border-top: 1px solid rgba(100, 150, 200, 0.1);
+  font-size: 0.45rem;
+  color: #4a5a6a;
+  letter-spacing: 0.05em;
+  flex-shrink: 0;
+}
+
+.app__footer-divider {
+  color: #2a3a4a;
+}
+
+/* Responsive */
+@media (max-width: 900px) {
+  .dashboard__row--quiz {
+    flex-wrap: wrap;
+  }
+
+  .dashboard__row--quiz > * {
+    min-width: 45%;
+  }
+
+  .dashboard__row--controls {
+    flex-direction: column;
+  }
+}

@@ -301,20 +301,20 @@ State machine-based quiz demo controller that orchestrates both ANAFI and Crazyf
 
 **State Machine:**
 ```
-┌──────────┐      's'        ┌──────────┐      'n'      ┌──────────┐
+┌──────────┐    'start'      ┌──────────┐    'detect'   ┌──────────┐
 │  UNINIT  │ ──────────────► │   IDLE   │ ────────────► │DETECTING │
 │          │   takeoff both  │          │               │          │
 └──────────┘                 └──────────┘               └────┬─────┘
                                   ▲                          │
-                                  │ 's' + home reached  /quiz/answer
-                                  │                          │
+                                  │ 'answer_correct'    /quiz/answer
+                                  │  + home reached          │
                              ┌────┴─────┐                    │
                              │ DRAWING  │◄───────────────────┘
                              │          │   start trajectory
                              └────┬─────┘
                                   │
      ┌────────────────────────────┼────────────────────────────┐
-     │ 'x' OR 5min timeout        │                            │
+     │ 'finish' OR 5min timeout   │                            │
      │ (from IDLE/DETECTING/DRAWING)                           │
      ▼                            ▼                            ▼
 ┌──────────┐
@@ -332,16 +332,14 @@ State machine-based quiz demo controller that orchestrates both ANAFI and Crazyf
 | `DRAWING` | Mini drone executing trajectory based on answer |
 | `FINISH` | All drones landed, operation complete |
 
-**Key Mappings:**
-| Key | Action |
-|-----|--------|
-| `s` | Start (UnInit→Idle) / Return home (Drawing→Idle) |
-| `n` | Next - Start detecting (Idle→Detecting) |
-| `x` | Exit - Land and finish |
-| `SPACE` | Emergency Stop (all drones) |
-| `1` | (mini_only_mode) Manual answer 1 → figure8 |
-| `2` | (mini_only_mode) Manual answer 2 → vertical_a |
-| `Ctrl+C` | Force quit |
+**Commands (via `/quiz/command` topic or Web UI):**
+| Command | Action |
+|---------|--------|
+| `start` | Start operation (UnInit→Idle) - Takeoff both drones |
+| `detect` | Start detecting (Idle→Detecting) |
+| `answer_correct` | Confirm answer correct (Drawing→Idle) - Return home |
+| `finish` | End operation - Land both drones |
+| `emergency` | Emergency Stop (all drones) |
 
 **Subscribed Topics:**
 | Topic | Type | Description |
@@ -349,6 +347,7 @@ State machine-based quiz demo controller that orchestrates both ANAFI and Crazyf
 | `/cf/odom` | `Odometry` | Mini drone position/orientation |
 | `/anafi/drone/state` | `String` | ANAFI flight state |
 | `/quiz/answer` | `String` | Detection result (triggers Drawing) |
+| `/quiz/command` | `String` | Command from Web UI |
 
 **Published Topics:**
 | Topic | Type | Description |
