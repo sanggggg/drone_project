@@ -67,19 +67,6 @@ def generate_launch_description():
             'hl_goto_duration_s': 5.1,
         }],
     )
-
-    # AI-Deck Camera Node (optional - comment out if not using camera)
-    # ai_deck_camera_node = Node(
-    #     package='mini_drone',
-    #     executable='ai_deck_camera',
-    #     name='ai_deck_camera',
-    #     output='screen',
-    #     parameters=[{
-    #         'host': '192.168.4.1',
-    #         'port': 5000,
-    #     }],
-    # )
-
     # Quiz Controller Node
     quiz_controller_node = Node(
         package='mini_drone',

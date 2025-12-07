@@ -144,7 +144,8 @@ class QuizControllerNode(Node):
         qos_best_effort.history = HistoryPolicy.KEEP_LAST
 
         # ---- State ----
-        self._lock = threading.Lock()
+        # RLock을 사용하여 같은 스레드에서 중첩 획득 허용 (데드락 방지)
+        self._lock = threading.RLock()
         self.state = QuizState.UNINIT
         self.operation_start_time: Optional[float] = None
         self.pending_home_return = False
@@ -235,7 +236,7 @@ class QuizControllerNode(Node):
             self.get_logger().info(f"Quiz answer received: '{answer}' → trajectory: '{trajectory}'")
             self._run_trajectory(trajectory)
             self.state = QuizState.DRAWING
-            self._update_ui()
+            self._update_ui_locked()
 
     # ==================== Timer Callbacks ====================
 
@@ -258,7 +259,7 @@ class QuizControllerNode(Node):
                     self.state = target_state
                     self.pending_transition = None
                     self.get_logger().info(f"State transition complete → {target_state.name}")
-                    self._update_ui()
+                    self._update_ui_locked()
                     return
 
             # Drawing→Idle 전환 체크 (홈 도달 확인)
@@ -266,7 +267,7 @@ class QuizControllerNode(Node):
                 self.pending_home_return = False
                 self.state = QuizState.IDLE
                 self.get_logger().info("Mini drone returned home → IDLE")
-                self._update_ui()
+                self._update_ui_locked()
 
     def _publish_state_timer(self):
         """1Hz 상태 발행 타이머"""
@@ -343,8 +344,8 @@ class QuizControllerNode(Node):
         self.pub_cf_land.publish(msg)
         self.get_logger().info("Mini land command sent")
 
-    def _handle_emergency_stop(self):
-        """Emergency Stop - 모든 드론 즉시 정지"""
+    def _handle_emergency_stop_locked(self):
+        """Emergency Stop - 모든 드론 즉시 정지 (lock 보유 상태에서 호출)"""
         self.get_logger().warn("!!! EMERGENCY STOP !!!")
 
         # Mini drone E-STOP
@@ -368,12 +369,11 @@ class QuizControllerNode(Node):
             else:
                 self.get_logger().warn("ANAFI emergency service not ready")
 
-        # 상태를 FINISH로 전환
-        with self._lock:
-            self.state = QuizState.FINISH
-            self.pending_transition = None
-            self.pending_home_return = False
-            self._update_ui()
+        # 상태를 FINISH로 전환 (이미 lock 보유 상태)
+        self.state = QuizState.FINISH
+        self.pending_transition = None
+        self.pending_home_return = False
+        self._update_ui_locked()
 
     def _goto_mini_home(self):
         """Mini drone을 홈 위치로 이동"""
@@ -451,7 +451,7 @@ class QuizControllerNode(Node):
 
             # Space: Emergency Stop
             elif key == ' ':
-                self._handle_emergency_stop()
+                self._handle_emergency_stop_locked()
 
     def _handle_start_locked(self):
         """UnInit → Idle 전환 처리 (lock 보유 상태)"""
@@ -460,7 +460,7 @@ class QuizControllerNode(Node):
         self.operation_start_time = time.time()
         delay = self.takeoff_duration + self.settle_time
         self._schedule_transition(QuizState.IDLE, delay)
-        self._update_ui()
+        self._update_ui_locked()
 
     def _handle_start_detecting_locked(self):
         """Idle → Detecting 전환 처리 (lock 보유 상태)"""
@@ -469,7 +469,7 @@ class QuizControllerNode(Node):
             self.get_logger().info("Detecting started - press [1] or [2] for manual answer")
         else:
             self.get_logger().info("Detecting started - waiting for /quiz/answer...")
-        self._update_ui()
+        self._update_ui_locked()
 
     def _handle_manual_answer_locked(self, answer: str):
         """mini_only_mode에서 수동 answer 입력 처리 (lock 보유 상태)"""
@@ -488,14 +488,14 @@ class QuizControllerNode(Node):
         # 직접 Drawing 상태로 전환 및 궤적 실행
         self._run_trajectory(trajectory)
         self.state = QuizState.DRAWING
-        self._update_ui()
+        self._update_ui_locked()
 
     def _handle_return_home_locked(self):
         """Drawing 중 's' 키: 홈으로 복귀 (lock 보유 상태)"""
         self.get_logger().info("Returning mini drone to home...")
         self._goto_mini_home()
         self.pending_home_return = True
-        self._update_ui()
+        self._update_ui_locked()
 
     def _initiate_finish_locked(self):
         """착륙 시작 및 Finish 전환 예약 (lock 보유 상태)"""
@@ -504,7 +504,7 @@ class QuizControllerNode(Node):
         delay = self.land_duration + self.settle_time
         self._schedule_transition(QuizState.FINISH, delay)
         self.pending_home_return = False  # 홈 복귀 대기 취소
-        self._update_ui()
+        self._update_ui_locked()
 
     # ==================== Keyboard Loop ====================
 
@@ -528,6 +528,10 @@ class QuizControllerNode(Node):
                     continue
 
                 if key == '\x03':  # Ctrl+C
+                    print("\n\nCtrl+C detected, shutting down...")
+                    self._running = False
+                    # rclpy.shutdown()은 스레드 안전하므로 직접 호출 가능
+                    rclpy.shutdown()
                     break
 
                 self._on_key_press(key)
@@ -568,22 +572,26 @@ class QuizControllerNode(Node):
         print(ui)
 
     def _update_ui(self):
-        """상태 변경 시 UI 업데이트 (간단 로그)"""
+        """상태 변경 시 UI 업데이트 (간단 로그) - 외부에서 호출용"""
         with self._lock:
-            state_name = self.state.name
-            timer_info = ""
-            if self.operation_start_time is not None:
-                elapsed = time.time() - self.operation_start_time
-                remaining = max(0, self.operation_timeout - elapsed)
-                timer_info = f" | Timer: {int(elapsed//60):02d}:{int(elapsed%60):02d} / {int(self.operation_timeout//60):02d}:00"
+            self._update_ui_locked()
 
-            pending_info = ""
-            if self.pending_home_return:
-                pending_info = " | Waiting for home arrival"
-            elif self.pending_transition is not None:
-                target, trans_time = self.pending_transition
-                remaining = max(0, trans_time - time.time())
-                pending_info = f" | Transitioning to {target.name} in {remaining:.1f}s"
+    def _update_ui_locked(self):
+        """상태 변경 시 UI 업데이트 (lock 보유 상태에서 호출)"""
+        # lock 보유 상태에서 안전하게 읽기
+        state_name = self.state.name
+        timer_info = ""
+        if self.operation_start_time is not None:
+            elapsed = time.time() - self.operation_start_time
+            timer_info = f" | Timer: {int(elapsed//60):02d}:{int(elapsed%60):02d} / {int(self.operation_timeout//60):02d}:00"
+
+        pending_info = ""
+        if self.pending_home_return:
+            pending_info = " | Waiting for home arrival"
+        elif self.pending_transition is not None:
+            target, trans_time = self.pending_transition
+            remaining = max(0, trans_time - time.time())
+            pending_info = f" | Transitioning to {target.name} in {remaining:.1f}s"
 
         print(f"\n>>> State: [{state_name}]{timer_info}{pending_info}")
 
@@ -597,9 +605,11 @@ def main(args=None):
     rclpy.init(args=args)
     node = QuizControllerNode()
     try:
-        rclpy.spin(node)
+        # spin_once 루프를 사용하여 _running 플래그를 체크할 수 있도록 함
+        while rclpy.ok() and node._running:
+            rclpy.spin_once(node, timeout_sec=0.1)
     except KeyboardInterrupt:
-        pass
+        node.get_logger().info("KeyboardInterrupt received, shutting down...")
     finally:
         node.destroy_node()
         rclpy.shutdown()
