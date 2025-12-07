@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useROS, useTopic, useCompressedImageTopic } from './hooks/useROS';
+import { useROS, useTopic, useImageTopic } from './hooks/useROS';
 import {
   ConnectionStatus,
   QuizStateDisplay,
@@ -68,10 +68,10 @@ function App() {
     enabled: isConnected,
   });
 
-  // ANAFI Camera (compressed image)
-  const { imageData: anafiCamera, lastUpdate: anafiCameraUpdate } = useCompressedImageTopic(
+  // ANAFI Camera (image)
+  const { imageData: anafiCamera, lastUpdate: anafiCameraUpdate } = useImageTopic(
     ros,
-    '/anafi/camera/image/compressed',
+    '/anafi/camera/image',
     isConnected
   );
 

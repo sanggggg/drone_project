@@ -13,7 +13,7 @@ export const CameraFeed: React.FC<CameraFeedProps> = ({
   imageData,
   lastUpdate,
   title = 'ANAFI Camera',
-  topic = '/anafi/camera/image/compressed',
+  topic = '/anafi/camera/image',
 }) => {
   return (
     <DataCard

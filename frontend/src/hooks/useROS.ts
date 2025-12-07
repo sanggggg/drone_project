@@ -154,3 +154,195 @@ export function useCompressedImageTopic(ros: ROSLIB.Ros | null, topicName: strin
 
   return { imageData, lastUpdate };
 }
+
+// Message type for Image messages
+interface ImageMessage {
+  header: {
+    seq?: number;
+    stamp: {
+      secs: number;
+      nsecs: number;
+    };
+    frame_id: string;
+  };
+  height: number;
+  width: number;
+  encoding: string;
+  is_bigendian: number;
+  step: number;
+  data: string | number[]; // base64 string (from ROSBridge) or uint8 array
+}
+
+// Hook for Image topics (sensor_msgs/Image)
+export function useImageTopic(ros: ROSLIB.Ros | null, topicName: string, enabled = true) {
+  const [imageData, setImageData] = useState<string | null>(null);
+  const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
+  const topicRef = useRef<ROSLIB.Topic<ImageMessage> | null>(null);
+
+  useEffect(() => {
+    if (!ros || !enabled) {
+      return;
+    }
+
+    const topic = new ROSLIB.Topic<ImageMessage>({
+      ros,
+      name: topicName,
+      messageType: 'sensor_msgs/Image',
+    });
+
+    topicRef.current = topic;
+
+    const callback = (msg: ImageMessage) => {
+      try {
+        // Debug: Log first message to understand data format
+        if (!topicRef.current || (topicRef.current as any)._debugLogged) {
+          // Skip debug after first message
+        } else {
+          console.log('Image message received:', {
+            width: msg.width,
+            height: msg.height,
+            encoding: msg.encoding,
+            step: msg.step,
+            dataType: typeof msg.data,
+            dataLength: typeof msg.data === 'string' ? msg.data.length : msg.data?.length,
+            dataPreview: typeof msg.data === 'string' ? msg.data.substring(0, 50) : 'array',
+          });
+          (topicRef.current as any)._debugLogged = true;
+        }
+        
+        // ROSLIB sends data as base64 string, convert to Uint8Array
+        let imageBytes: Uint8Array;
+        
+        if (typeof msg.data === 'string') {
+          // Base64 string from ROSBridge
+          const binaryString = atob(msg.data);
+          imageBytes = new Uint8Array(binaryString.length);
+          for (let i = 0; i < binaryString.length; i++) {
+            imageBytes[i] = binaryString.charCodeAt(i);
+          }
+        } else {
+          // Already a number array
+          imageBytes = new Uint8Array(msg.data);
+        }
+        
+        // Validate dimensions
+        if (msg.width <= 0 || msg.height <= 0) {
+          console.warn('Invalid image dimensions:', msg.width, msg.height);
+          return;
+        }
+        
+        // Create canvas to render the image
+        const canvas = document.createElement('canvas');
+        canvas.width = msg.width;
+        canvas.height = msg.height;
+        const ctx = canvas.getContext('2d');
+        
+        if (!ctx) {
+          console.error('Failed to get canvas context');
+          return;
+        }
+        
+        // Create ImageData from the raw pixel data
+        const imageData = ctx.createImageData(msg.width, msg.height);
+        const pixels = imageData.data;
+        
+        // Handle different encodings
+        if (msg.encoding === 'bgr8') {
+          // BGR8: Convert BGR to RGB, handle step field for row padding
+          const bytesPerPixel = 3;
+          const expectedDataSize = msg.height * msg.step;
+          
+          if (imageBytes.length < expectedDataSize) {
+            console.warn(`Image data size mismatch: expected ${expectedDataSize}, got ${imageBytes.length}`);
+          }
+          
+          for (let row = 0; row < msg.height; row++) {
+            const rowOffset = row * msg.step;
+            const pixelOffset = row * msg.width * 4;
+            
+            for (let col = 0; col < msg.width; col++) {
+              const srcIdx = rowOffset + col * bytesPerPixel;
+              const dstIdx = pixelOffset + col * 4;
+              
+              if (srcIdx + 2 < imageBytes.length) {
+                pixels[dstIdx] = imageBytes[srcIdx + 2];     // R (from B)
+                pixels[dstIdx + 1] = imageBytes[srcIdx + 1]; // G
+                pixels[dstIdx + 2] = imageBytes[srcIdx];     // B (from R)
+                pixels[dstIdx + 3] = 255;                     // A
+              }
+            }
+          }
+        } else if (msg.encoding === 'rgb8') {
+          // RGB8: Already in correct format
+          const bytesPerPixel = 3;
+          const expectedDataSize = msg.height * msg.step;
+          
+          if (imageBytes.length < expectedDataSize) {
+            console.warn(`Image data size mismatch: expected ${expectedDataSize}, got ${imageBytes.length}`);
+          }
+          
+          for (let row = 0; row < msg.height; row++) {
+            const rowOffset = row * msg.step;
+            const pixelOffset = row * msg.width * 4;
+            
+            for (let col = 0; col < msg.width; col++) {
+              const srcIdx = rowOffset + col * bytesPerPixel;
+              const dstIdx = pixelOffset + col * 4;
+              
+              if (srcIdx + 2 < imageBytes.length) {
+                pixels[dstIdx] = imageBytes[srcIdx];         // R
+                pixels[dstIdx + 1] = imageBytes[srcIdx + 1]; // G
+                pixels[dstIdx + 2] = imageBytes[srcIdx + 2]; // B
+                pixels[dstIdx + 3] = 255;                     // A
+              }
+            }
+          }
+        } else if (msg.encoding === 'mono8') {
+          // MONO8: Grayscale
+          const expectedDataSize = msg.height * msg.step;
+          
+          if (imageBytes.length < expectedDataSize) {
+            console.warn(`Image data size mismatch: expected ${expectedDataSize}, got ${imageBytes.length}`);
+          }
+          
+          for (let row = 0; row < msg.height; row++) {
+            const rowOffset = row * msg.step;
+            const pixelOffset = row * msg.width * 4;
+            
+            for (let col = 0; col < msg.width; col++) {
+              const srcIdx = rowOffset + col;
+              const dstIdx = pixelOffset + col * 4;
+              
+              if (srcIdx < imageBytes.length) {
+                const val = imageBytes[srcIdx];
+                pixels[dstIdx] = val;     // R
+                pixels[dstIdx + 1] = val; // G
+                pixels[dstIdx + 2] = val; // B
+                pixels[dstIdx + 3] = 255; // A
+              }
+            }
+          }
+        } else {
+          console.warn(`Unsupported image encoding: ${msg.encoding}`);
+          return;
+        }
+        
+        ctx.putImageData(imageData, 0, 0);
+        const dataUrl = canvas.toDataURL('image/png');
+        setImageData(dataUrl);
+        setLastUpdate(new Date());
+      } catch (error) {
+        console.error('Error processing image message:', error, msg);
+      }
+    };
+
+    topic.subscribe(callback);
+
+    return () => {
+      topic.unsubscribe();
+      topicRef.current = null;
+    };
+  }, [ros, topicName, enabled]);
+
+  return { imageData, lastUpdate };
+}

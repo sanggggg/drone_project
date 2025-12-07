@@ -59,6 +59,16 @@ export interface CompressedImage {
   data: string; // base64 encoded
 }
 
+export interface Image {
+  header: Header;
+  height: number;
+  width: number;
+  encoding: string; // e.g., "bgr8", "rgb8"
+  is_bigendian: number;
+  step: number; // row length in bytes
+  data: number[]; // uint8 array
+}
+
 export type QuizState = 'UNINIT' | 'IDLE' | 'DETECTING' | 'DRAWING' | 'FINISH' | 'UNKNOWN';
 
 export interface DroneStatus {
