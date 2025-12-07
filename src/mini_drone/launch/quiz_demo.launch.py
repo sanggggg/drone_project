@@ -11,6 +11,9 @@ Quiz Demo Launch File
   # Mini drone만 테스트 (ANAFI 없이)
   ros2 launch mini_drone quiz_demo.launch.py mini_only_mode:=true
 
+  # 수직 모드
+  ros2 launch mini_drone quiz_demo.launch.py vertical_mode:=True
+
   # 파라미터 변경 예시
   ros2 launch mini_drone quiz_demo.launch.py operation_timeout_min:=3.0
 """
@@ -50,6 +53,12 @@ def generate_launch_description():
         description='Test with Mini drone only (skip ANAFI). In DETECTING state, press 1/2 for manual answer.'
     )
 
+    vertical_mode_arg = DeclareLaunchArgument(
+        'vertical_mode',
+        default_value='False',
+        description='Vertical mode (True: vertical, False: horizontal)'
+    )
+
     # Crazyflie Bridge Node
     cf_bridge_node = Node(
         package='mini_drone',
@@ -72,7 +81,7 @@ def generate_launch_description():
         executable='quiz_controller',
         name='quiz_controller',
         output='screen',
-        prefix='xterm -e',  # 별도 터미널에서 실행 (키보드 입력용)
+        # prefix='xterm -e',  # 별도 터미널에서 실행 (키보드 입력용)
         parameters=[{
             # Mini drone 홈 위치
             'mini_home_x': 0.0,
@@ -94,6 +103,7 @@ def generate_launch_description():
             'home_yaw_tolerance_deg': 15.0,
             # Mini only mode
             'mini_only_mode': LaunchConfiguration('mini_only_mode'),
+            'vertical_mode': LaunchConfiguration('vertical_mode'),
         }],
     )
 
@@ -103,6 +113,7 @@ def generate_launch_description():
         mini_home_z_arg,
         uri_arg,
         mini_only_mode_arg,
+        vertical_mode_arg,
         # Nodes
         cf_bridge_node,
         quiz_controller_node,

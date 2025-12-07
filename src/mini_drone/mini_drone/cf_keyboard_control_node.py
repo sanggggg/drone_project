@@ -406,7 +406,7 @@ class CfKeyboardTeleop(Node):
         if key == 't':
             self.get_logger().info('[KEY] Takeoff')
             msg = Float32()
-            msg.data = 1.5  # 원하는 takeoff 높이(m)
+            msg.data = 0.5  # 원하는 takeoff 높이(m)
             self.pub_takeoff.publish(msg)
             return
 
@@ -438,6 +438,7 @@ class CfKeyboardTeleop(Node):
 
         if key == '2':
             self.get_logger().info('[KEY] 2: Running Figure 2...')
+            self._send_goto(self._x, self._y, self._z+1.0, self._yaw)  # 현재 위치로 고정
             self.waypoint_exec = WaypointExecutor(
                 send_goto=self._send_goto,
                 get_odom=self.get_odom,

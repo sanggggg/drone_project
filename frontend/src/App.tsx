@@ -68,13 +68,6 @@ function App() {
     enabled: isConnected,
   });
 
-  // ANAFI Camera (image)
-  const { imageData: anafiCamera, lastUpdate: anafiCameraUpdate } = useImageTopic(
-    ros,
-    '/anafi/camera/image',
-    isConnected
-  );
-
   return (
     <div className="app">
       <div className="app__background">
@@ -131,14 +124,6 @@ function App() {
               ros={ros}
               isConnected={isConnected}
               currentState={currentState}
-            />
-          </div>
-
-          {/* Bottom Row: Camera */}
-          <div className="dashboard__row dashboard__row--camera">
-            <CameraFeed
-              imageData={anafiCamera}
-              lastUpdate={anafiCameraUpdate}
             />
           </div>
         </div>

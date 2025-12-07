@@ -39,7 +39,7 @@ from std_msgs.msg import String, Float32
 from geometry_msgs.msg import PoseStamped
 from std_srvs.srv import Trigger
 from mini_drone_interfaces.srv import RunTrajectory
-
+from mini_drone.waypoint_executor import WaypointExecutor
 
 class QuizState(Enum):
     """퀴즈 컨트롤러 상태"""
@@ -104,6 +104,7 @@ class QuizControllerNode(Node):
 
         # Mini only mode (ANAFI 없이 테스트)
         self.declare_parameter('mini_only_mode', False)
+        self.declare_parameter('vertical_mode', True)
 
         # 파라미터 로드
         self.mini_home_x = float(self.get_parameter('mini_home_x').value)
@@ -125,6 +126,7 @@ class QuizControllerNode(Node):
         self.home_yaw_tol = math.radians(float(self.get_parameter('home_yaw_tolerance_deg').value))
 
         self.mini_only_mode = bool(self.get_parameter('mini_only_mode').value)
+        self.vertical_mode = bool(self.get_parameter('vertical_mode').value)
 
         # Answer → Trajectory 매핑
         self.answer_trajectory_map = {
@@ -148,7 +150,6 @@ class QuizControllerNode(Node):
         qos_best_effort = QoSProfile(depth=10)
         qos_best_effort.reliability = ReliabilityPolicy.BEST_EFFORT
         qos_best_effort.history = HistoryPolicy.KEEP_LAST
-
         # ---- State ----
         # RLock을 사용하여 같은 스레드에서 중첩 획득 허용 (데드락 방지)
         self._lock = threading.RLock()
@@ -192,13 +193,16 @@ class QuizControllerNode(Node):
         self.pub_cf_land = self.create_publisher(Float32, '/cf/hl/land', qos_reliable)
         self.pub_cf_goto = self.create_publisher(PoseStamped, '/cf/hl/goto', qos_reliable)
         self.pub_quiz_answer = self.create_publisher(String, '/quiz/answer', qos_reliable)
-
+        self.pub_goto    = self.create_publisher(PoseStamped, '/cf/hl/goto', qos_reliable)
         # ---- Service Clients ----
         self.cli_anafi_takeoff = self.create_client(Trigger, '/anafi/drone/takeoff')
         self.cli_anafi_land = self.create_client(Trigger, '/anafi/drone/land')
         self.cli_anafi_emergency = self.create_client(Trigger, '/anafi/drone/emergency')
         self.cli_cf_stop = self.create_client(Trigger, '/cf/stop')
         self.cli_cf_traj = self.create_client(RunTrajectory, '/cf/traj/run')
+
+        #-----others------
+        self._have_odom = False
 
         # ---- Timers ----
         self.create_timer(0.1, self._check_state_timer)  # 10Hz 상태 체크
@@ -209,6 +213,35 @@ class QuizControllerNode(Node):
         self.get_logger().info('Listening for commands on /quiz/command topic')
 
     # ==================== Callbacks ====================
+    
+    def has_odom(self):
+        with self._lock:
+            return self._have_odom
+
+    def get_odom(self):
+        with self._lock:
+            return self._mini_x, self._mini_y, self._mini_z, self._mini_yaw
+        
+    def _send_goto(self, target_x, target_y, target_z, target_yaw):
+        msg = PoseStamped()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.header.frame_id = self.world_frame
+        msg.pose.position.x = float(target_x)
+        msg.pose.position.y = float(target_y)
+        msg.pose.position.z = float(target_z)
+
+        # yaw만 반영 (roll, pitch=0)
+        cy = math.cos(target_yaw * 0.5)
+        sy = math.sin(target_yaw * 0.5)
+        msg.pose.orientation.z = sy
+        msg.pose.orientation.w = cy
+        msg.pose.orientation.x = 0.0
+        msg.pose.orientation.y = 0.0
+
+        self.pub_goto.publish(msg)
+        self.get_logger().info(
+            f'GOTO → x={target_x:.2f}, y={target_y:.2f}, z={target_z:.2f}, yaw={math.degrees(target_yaw):.1f}deg'
+        )
 
     def _cf_odom_cb(self, msg: Odometry):
         """Crazyflie odometry 콜백"""
@@ -236,14 +269,23 @@ class QuizControllerNode(Node):
                 return
 
             answer = msg.data.strip()
-            trajectory = self.answer_trajectory_map.get(answer)
+            if self.vertical_mode:
+                self.waypoint_exec = WaypointExecutor(
+                    send_goto=self._send_goto,
+                    get_odom=self.get_odom,
+                    has_odom=self.has_odom,
+                    logger=self.get_logger()
+                )
+                self.waypoint_exec.run_sequence(list(answer))
+            else:                
+                trajectory = self.answer_trajectory_map.get(answer)
 
-            if trajectory is None:
-                self.get_logger().warn(f"Unknown answer: '{answer}'. Available: {list(self.answer_trajectory_map.keys())}")
-                return
+                if trajectory is None:
+                    self.get_logger().warn(f"Unknown answer: '{answer}'. Available: {list(self.answer_trajectory_map.keys())}")
+                    return
 
-            self.get_logger().info(f"Quiz answer received: '{answer}' → trajectory: '{trajectory}'")
-            self._run_trajectory(trajectory)
+                self.get_logger().info(f"Quiz answer received: '{answer}' → trajectory: '{trajectory}'")
+                self._run_trajectory(trajectory)
             self.state = QuizState.DRAWING
             self._log_state_change()
 
@@ -389,6 +431,8 @@ class QuizControllerNode(Node):
 
         # Mini takeoff
         msg = Float32()
+        if self.vertical_mode:
+            self.mini_home_z += 1.0  # 수직 모드: 홈 z + 1.0m
         msg.data = self.mini_home_z
         self.pub_cf_takeoff.publish(msg)
         self.get_logger().info(f"Mini takeoff command sent (target z={self.mini_home_z}m)")
