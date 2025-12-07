@@ -54,7 +54,6 @@ class CfBridgeNode(Node):
         self.declare_parameter('publish_rate_hz', 20.0)  # ROS publish
         self.declare_parameter('use_state_estimate', True)
         self.declare_parameter('cmd_rate_hz', 50.0)      # hover 전송 주기(컨트롤러에 전달)
-        self.declare_parameter('hover_timeout_s', 0.2)
         self.declare_parameter('arm_on_start', True)
         # High-level durations
         self.declare_parameter('hl_takeoff_duration_s', 2.0)
@@ -67,7 +66,6 @@ class CfBridgeNode(Node):
         self.pub_rate = float(p('publish_rate_hz').double_value or 20.0)
         self.use_state = bool(p('use_state_estimate').bool_value or True)
         self.cmd_rate = float(p('cmd_rate_hz').double_value or 50.0)
-        self.hover_timeout_s = float(p('hover_timeout_s').double_value or 0.2)
         self.arm_on_start = bool(p('arm_on_start').bool_value or True)
         self.hltake_dur = float(p('hl_takeoff_duration_s').double_value or 2.0)
         self.hlland_dur = float(p('hl_land_duration_s').double_value or 2.0)
@@ -113,7 +111,6 @@ class CfBridgeNode(Node):
         self.ctrl = ControlManager(
             node=self,
             cmd_rate_hz=self.cmd_rate,
-            hover_timeout_s=self.hover_timeout_s,
             hl_durations={'takeoff': self.hltake_dur, 'land': self.hlland_dur, 'goto': self.hlgoto_dur},
         )
 
