@@ -256,9 +256,11 @@ class QuizControllerNode(Node):
             
             self._tracking_complete = True
             self.get_logger().warning(
-                "[Tracking] ★ Auto-tracking COMPLETE! Ready for OCR. ★\n"
-                "    → Press 'Start OCR' button in frontend to begin OCR."
+                "[Tracking] ★ Auto-tracking COMPLETE! Starting OCR automatically... ★"
             )
+            
+            # 자동으로 OCR 시작
+            self._handle_start_ocr_locked()
     
     def has_odom(self):
         with self._lock:
