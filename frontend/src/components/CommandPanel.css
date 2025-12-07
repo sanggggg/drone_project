@@ -1,0 +1,286 @@
+.command-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 0.5rem 0.6rem;
+  background: linear-gradient(145deg, rgba(25, 30, 45, 0.95), rgba(15, 20, 35, 0.98));
+  border: 1px solid rgba(100, 180, 255, 0.12);
+  border-radius: 8px;
+  position: relative;
+  overflow: visible;
+}
+
+.command-panel::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, #ff6b35, transparent);
+  opacity: 0.8;
+  pointer-events: none;
+}
+
+.command-panel__title {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  margin: 0;
+  font-family: 'Orbitron', 'Rajdhani', sans-serif;
+  font-size: 0.55rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #e0e8f0;
+}
+
+.command-panel__icon {
+  font-size: 0.7rem;
+  color: #ff6b35;
+}
+
+.command-panel__buttons {
+  display: flex;
+  gap: 0.25rem;
+  flex-wrap: wrap;
+}
+
+.cmd-btn {
+  flex: 1;
+  min-width: 55px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.1rem;
+  padding: 0.3rem 0.2rem;
+  border: 1px solid rgba(100, 140, 180, 0.2);
+  border-radius: 5px;
+  background: rgba(40, 50, 70, 0.4);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  position: relative;
+  overflow: hidden;
+}
+
+.cmd-btn::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.05), transparent);
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.cmd-btn:hover:not(.disabled)::before {
+  opacity: 1;
+}
+
+.cmd-btn:hover:not(.disabled) {
+  transform: translateY(-1px);
+}
+
+.cmd-btn:active:not(.disabled) {
+  transform: translateY(0);
+}
+
+.cmd-btn.disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.cmd-btn__icon {
+  font-size: 0.8rem;
+  line-height: 1;
+}
+
+.cmd-btn__label {
+  font-family: 'Orbitron', 'Rajdhani', sans-serif;
+  font-size: 0.45rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #e0e8f0;
+}
+
+.cmd-btn__hint {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 0.35rem;
+  color: #6a8090;
+  letter-spacing: 0.02em;
+}
+
+/* Setup Button */
+.cmd-btn--setup {
+  border-color: rgba(0, 200, 120, 0.3);
+}
+
+.cmd-btn--setup:hover:not(.disabled) {
+  border-color: rgba(0, 255, 136, 0.5);
+  box-shadow: 0 0 12px rgba(0, 255, 136, 0.2);
+}
+
+.cmd-btn--setup .cmd-btn__icon {
+  color: #00ff88;
+}
+
+/* Detect Button */
+.cmd-btn--detect {
+  border-color: rgba(0, 180, 255, 0.3);
+}
+
+.cmd-btn--detect:hover:not(.disabled) {
+  border-color: rgba(0, 212, 255, 0.5);
+  box-shadow: 0 0 12px rgba(0, 212, 255, 0.2);
+}
+
+.cmd-btn--detect .cmd-btn__icon {
+  color: #00d4ff;
+}
+
+/* Correct Button */
+.cmd-btn--correct {
+  border-color: rgba(170, 100, 255, 0.3);
+}
+
+.cmd-btn--correct:hover:not(.disabled) {
+  border-color: rgba(170, 100, 255, 0.5);
+  box-shadow: 0 0 12px rgba(170, 100, 255, 0.2);
+}
+
+.cmd-btn--correct .cmd-btn__icon {
+  color: #aa66ff;
+}
+
+/* Finish Button */
+.cmd-btn--finish {
+  border-color: rgba(255, 170, 0, 0.3);
+}
+
+.cmd-btn--finish:hover:not(.disabled) {
+  border-color: rgba(255, 170, 0, 0.5);
+  box-shadow: 0 0 12px rgba(255, 170, 0, 0.2);
+}
+
+.cmd-btn--finish .cmd-btn__icon {
+  color: #ffaa00;
+}
+
+/* Mock Button */
+.cmd-btn-wrapper {
+  position: relative;
+  flex: 1;
+  min-width: 55px;
+  display: flex;
+}
+
+.cmd-btn-wrapper .cmd-btn {
+  width: 100%;
+}
+
+.cmd-btn--mock {
+  border-color: rgba(255, 170, 0, 0.3);
+}
+
+.cmd-btn--mock:hover:not(.disabled) {
+  border-color: rgba(255, 170, 0, 0.5);
+  box-shadow: 0 0 12px rgba(255, 170, 0, 0.2);
+}
+
+.cmd-btn--mock .cmd-btn__icon {
+  color: #ffaa00;
+}
+
+/* Mock Dropdown */
+.mock-dropdown {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  min-width: 100px;
+  background: rgba(20, 25, 35, 0.98);
+  border: 2px solid rgba(255, 170, 0, 0.5);
+  border-radius: 8px;
+  padding: 0.4rem;
+  z-index: 9999;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.6), 0 0 20px rgba(255, 170, 0, 0.2);
+  backdrop-filter: blur(10px);
+}
+
+.mock-dropdown__header {
+  font-family: 'Orbitron', 'Rajdhani', sans-serif;
+  font-size: 0.55rem;
+  font-weight: 600;
+  color: #ffaa00;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: 0.3rem 0.5rem;
+  border-bottom: 1px solid rgba(255, 170, 0, 0.3);
+  margin-bottom: 0.3rem;
+  text-align: center;
+}
+
+.mock-dropdown__item {
+  display: block;
+  width: 100%;
+  padding: 0.5rem 0.6rem;
+  margin-bottom: 0.2rem;
+  background: rgba(255, 170, 0, 0.15);
+  border: 1px solid rgba(255, 170, 0, 0.3);
+  border-radius: 6px;
+  color: #e0e8f0;
+  font-family: 'Orbitron', 'Rajdhani', sans-serif;
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.mock-dropdown__item:hover {
+  background: rgba(255, 170, 0, 0.35);
+  border-color: rgba(255, 170, 0, 0.6);
+  transform: scale(1.02);
+}
+
+.mock-dropdown__cancel {
+  display: block;
+  width: 100%;
+  padding: 0.3rem 0.5rem;
+  margin-top: 0.1rem;
+  background: transparent;
+  border: 1px solid rgba(100, 120, 150, 0.3);
+  border-radius: 4px;
+  color: #6a8090;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 0.45rem;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.mock-dropdown__cancel:hover {
+  background: rgba(100, 120, 150, 0.15);
+  color: #a0b0c0;
+}
+
+/* Emergency Button */
+.cmd-btn--emergency {
+  border-color: rgba(255, 68, 102, 0.4);
+  background: rgba(255, 68, 102, 0.1);
+}
+
+.cmd-btn--emergency:hover:not(.disabled) {
+  border-color: rgba(255, 68, 102, 0.7);
+  background: rgba(255, 68, 102, 0.2);
+  box-shadow: 0 0 15px rgba(255, 68, 102, 0.3);
+}
+
+.cmd-btn--emergency .cmd-btn__icon {
+  color: #ff4466;
+}
+
+.cmd-btn--emergency .cmd-btn__label {
+  color: #ff4466;
+}
+

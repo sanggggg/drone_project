@@ -3,8 +3,7 @@ Quiz Demo Launch File
 
 전체 퀴즈 데모 시스템을 실행합니다:
   1. cf_bridge - Crazyflie 텔레메트리 및 제어 브리지
-  2. ai_deck_camera - AI-Deck 카메라 스트리밍
-  3. quiz_controller - 상태 머신 기반 퀴즈 컨트롤러
+  2. quiz_controller - 상태 머신 기반 퀴즈 컨트롤러
 
 사용법:
   ros2 launch mini_drone quiz_demo.launch.py
@@ -106,7 +105,6 @@ def generate_launch_description():
         mini_only_mode_arg,
         # Nodes
         cf_bridge_node,
-        # ai_deck_camera_node,
         quiz_controller_node,
     ])
 

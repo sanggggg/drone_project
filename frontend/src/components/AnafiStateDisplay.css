@@ -1,0 +1,93 @@
+.anafi-state {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.25rem 0;
+}
+
+.anafi-state__badge {
+  width: 50px;
+  height: 50px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, rgba(0, 0, 0, 0.5), rgba(40, 50, 70, 0.4));
+  border: 2px solid var(--state-color);
+  box-shadow: 0 0 20px var(--state-color);
+  flex-shrink: 0;
+}
+
+.anafi-state__icon {
+  font-size: 1.25rem;
+  color: var(--state-color);
+  text-shadow: 0 0 10px var(--state-color);
+}
+
+.anafi-state__info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  flex: 1;
+}
+
+.anafi-state__value {
+  font-family: 'Orbitron', 'Rajdhani', sans-serif;
+  font-size: 0.9rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-shadow: 0 0 15px currentColor;
+}
+
+.anafi-state__label {
+  font-size: 0.5rem;
+  color: #6a8090;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.anafi-state__indicators {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.anafi-state__indicator {
+  padding: 0.2rem 0.5rem;
+  background: rgba(60, 70, 90, 0.3);
+  border: 1px solid rgba(100, 120, 150, 0.2);
+  border-radius: 4px;
+  transition: all 0.3s ease;
+}
+
+.anafi-state__indicator.active {
+  background: rgba(0, 255, 136, 0.15);
+  border-color: rgba(0, 255, 136, 0.4);
+}
+
+.anafi-state__indicator--warning.active {
+  background: rgba(255, 68, 102, 0.15);
+  border-color: rgba(255, 68, 102, 0.4);
+  animation: emergencyFlash 0.5s ease-in-out infinite;
+}
+
+@keyframes emergencyFlash {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+.anafi-state__indicator-label {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 0.45rem;
+  color: #6a8090;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.anafi-state__indicator.active .anafi-state__indicator-label {
+  color: #00ff88;
+}
+
+.anafi-state__indicator--warning.active .anafi-state__indicator-label {
+  color: #ff4466;
+}

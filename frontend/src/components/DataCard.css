@@ -1,0 +1,102 @@
+.data-card {
+  background: linear-gradient(145deg, rgba(25, 30, 45, 0.95), rgba(15, 20, 35, 0.98));
+  border: 1px solid rgba(100, 180, 255, 0.12);
+  border-radius: 8px;
+  padding: 0.5rem 0.6rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  backdrop-filter: blur(10px);
+  position: relative;
+  overflow: hidden;
+  transition: all 0.2s ease;
+}
+
+.data-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--card-accent, #64b5f6), transparent);
+  opacity: 0.6;
+}
+
+.data-card:hover {
+  border-color: rgba(100, 180, 255, 0.2);
+}
+
+.data-card--primary {
+  --card-accent: #00d4ff;
+  border-color: rgba(0, 212, 255, 0.2);
+}
+
+.data-card--warning {
+  --card-accent: #ffaa00;
+  border-color: rgba(255, 170, 0, 0.2);
+}
+
+.data-card--success {
+  --card-accent: #00ff88;
+  border-color: rgba(0, 255, 136, 0.2);
+}
+
+.data-card__header {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.data-card__title-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.data-card__icon {
+  font-size: 0.8rem;
+  opacity: 0.9;
+}
+
+.data-card__title {
+  margin: 0;
+  font-family: 'Orbitron', 'Rajdhani', sans-serif;
+  font-size: 0.55rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #e0e8f0;
+}
+
+.data-card__topic {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 0.4rem;
+  color: #5a7080;
+  background: rgba(100, 140, 180, 0.1);
+  padding: 0.08rem 0.25rem;
+  border-radius: 3px;
+}
+
+.data-card__content {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.data-card__footer {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 0.2rem;
+  border-top: 1px solid rgba(100, 140, 180, 0.08);
+}
+
+.data-card__update-time {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 0.4rem;
+  color: #4a6070;
+  letter-spacing: 0.03em;
+}

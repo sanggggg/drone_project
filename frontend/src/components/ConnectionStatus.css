@@ -1,0 +1,100 @@
+.connection-status {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.4rem 0.75rem;
+  background: linear-gradient(135deg, rgba(20, 25, 35, 0.95), rgba(30, 35, 50, 0.9));
+  border: 1px solid rgba(100, 200, 255, 0.15);
+  border-radius: 8px;
+  backdrop-filter: blur(10px);
+}
+
+.status-indicator {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  animation: pulse 2s ease-in-out infinite;
+}
+
+.status-indicator.connected .status-dot {
+  background: #00ff88;
+  box-shadow: 0 0 10px #00ff88;
+}
+
+.status-indicator.disconnected .status-dot {
+  background: #ff4466;
+  box-shadow: 0 0 10px #ff4466;
+  animation: pulse-error 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+@keyframes pulse-error {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.7; transform: scale(1.1); }
+}
+
+.status-text {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 0.55rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.status-indicator.connected .status-text {
+  color: #00ff88;
+}
+
+.status-indicator.disconnected .status-text {
+  color: #ff4466;
+}
+
+.connection-error {
+  color: #ffaa44;
+  font-size: 0.55rem;
+  padding: 0.15rem 0.5rem;
+  background: rgba(255, 170, 68, 0.1);
+  border-radius: 4px;
+  border: 1px solid rgba(255, 170, 68, 0.3);
+}
+
+.connection-btn {
+  padding: 0.3rem 0.75rem;
+  border: none;
+  border-radius: 6px;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 0.5rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.connection-btn.connect {
+  background: linear-gradient(135deg, #00cc77, #00aa66);
+  color: #001a0d;
+}
+
+.connection-btn.connect:hover {
+  background: linear-gradient(135deg, #00ff88, #00cc77);
+}
+
+.connection-btn.disconnect {
+  background: linear-gradient(135deg, #cc4455, #aa3344);
+  color: #fff;
+}
+
+.connection-btn.disconnect:hover {
+  background: linear-gradient(135deg, #ff4466, #cc4455);
+}
