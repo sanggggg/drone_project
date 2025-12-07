@@ -97,8 +97,8 @@ def main():
     qos.history = HistoryPolicy.KEEP_LAST
     qos.durability = DurabilityPolicy.VOLATILE
 
-    pub_comp = node.create_publisher(CompressedImage, '/camera/image/compressed', qos)
-    pub_raw  = node.create_publisher(Image, '/camera/image', qos) if publish_raw else None
+    pub_comp = node.create_publisher(CompressedImage, 'camera/image/compressed', qos)
+    pub_raw  = node.create_publisher(Image, 'camera/image', qos) if publish_raw else None
 
     decoder = DecodeWorker(node, pub_raw, frame_id, enable=decode_async)
 

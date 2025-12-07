@@ -77,17 +77,17 @@ class CfBridgeNode(Node):
         qos.history = HistoryPolicy.KEEP_LAST
 
         # ---- Publishers (RAW) ----
-        self.pub_imu = self.create_publisher(Imu, '/cf/imu', qos)
-        self.pub_rpy = self.create_publisher(Vector3Stamped, '/cf/rpy', qos)
-        self.pub_odom = self.create_publisher(Odometry, '/cf/odom', qos) if self.use_state else None
-        self.pub_batt = self.create_publisher(BatteryState, '/cf/battery', qos)
+        self.pub_imu = self.create_publisher(Imu, 'imu', qos)
+        self.pub_rpy = self.create_publisher(Vector3Stamped, 'rpy', qos)
+        self.pub_odom = self.create_publisher(Odometry, 'odom', qos) if self.use_state else None
+        self.pub_batt = self.create_publisher(BatteryState, 'battery', qos)
         self.range_pubs = {
-            'front': self.create_publisher(Range, '/cf/range/front', qos),
-            'back':  self.create_publisher(Range, '/cf/range/back', qos),
-            'left':  self.create_publisher(Range, '/cf/range/left', qos),
-            'right': self.create_publisher(Range, '/cf/range/right', qos),
-            'up':    self.create_publisher(Range, '/cf/range/up', qos),
-            'down':  self.create_publisher(Range, '/cf/range/down', qos),
+            'front': self.create_publisher(Range, 'range/front', qos),
+            'back':  self.create_publisher(Range, 'range/back', qos),
+            'left':  self.create_publisher(Range, 'range/left', qos),
+            'right': self.create_publisher(Range, 'range/right', qos),
+            'up':    self.create_publisher(Range, 'range/up', qos),
+            'down':  self.create_publisher(Range, 'range/down', qos),
         }
 
         # ---- State (updated by cflib) ----

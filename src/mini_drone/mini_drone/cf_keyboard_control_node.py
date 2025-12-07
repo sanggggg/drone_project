@@ -34,7 +34,7 @@ class CfKeyboardTeleop(Node):
     """
     Crazyflie 2.1+ 키보드 컨트롤러 노드
 
-    - /cf/odom, /cf/battery 를 subscribe 해서 상태 출력
+    - odom, battery 를 subscribe 해서 상태 출력
     - /camera/image 를 subscribe 해서 카메라 FPS 집계
     - /cf/hl/goto (PoseStamped) 로 목표 위치/자세 명령 publish
     - /cf/hl/takeoff, /cf/hl/land 이륙/착륙 publish
@@ -95,26 +95,26 @@ class CfKeyboardTeleop(Node):
 
         # ---- Subscriptions ----
         self.sub_odom = self.create_subscription(
-            Odometry, '/cf/odom', self._odom_cb, qos
+            Odometry, 'odom', self._odom_cb, qos
         )
         self.sub_batt = self.create_subscription(
-            BatteryState, '/cf/battery', self._battery_cb, qos
+            BatteryState, 'battery', self._battery_cb, qos
         )
         # ai_deck_camera_node.py 가 publish 하는 영상
         self.sub_cam = self.create_subscription(
-            Image, '/camera/image', self._cam_cb, cam_qos
+            Image, 'camera/image', self._cam_cb, cam_qos
         )
 
         # ---- Publisher (goto) ----
-        self.pub_goto    = self.create_publisher(PoseStamped, '/cf/hl/goto', qos_ctrl)
-        self.pub_takeoff = self.create_publisher(Float32, '/cf/hl/takeoff', qos_ctrl)
-        self.pub_land    = self.create_publisher(Float32, '/cf/hl/land', qos_ctrl)
+        self.pub_goto    = self.create_publisher(PoseStamped, 'hl/goto', qos_ctrl)
+        self.pub_takeoff = self.create_publisher(Float32, 'hl/takeoff', qos_ctrl)
+        self.pub_land    = self.create_publisher(Float32, 'hl/land', qos_ctrl)
 
         # ---- Service clients ----
-        self.cli_emerg = self.create_client(Trigger, '/cf/stop')
+        self.cli_emerg = self.create_client(Trigger, 'stop')
 
         # ---- Trajectory Client (단일 서비스) ----
-        self.cli_traj = self.create_client(RunTrajectory, '/cf/traj/run')
+        self.cli_traj = self.create_client(RunTrajectory, 'traj/run')
 
         # 서비스가 올라왔는지 확인 (논블로킹으로 몇 번만 로그)
         self._check_services_once()
@@ -165,9 +165,9 @@ class CfKeyboardTeleop(Node):
     def _check_services_once(self):
         # 0초 타임아웃으로 즉시 확인만 하고, 결과는 로그로만 남김
         for name, cli in [
-            # ('/cf/hl/takeoff', self.cli_takeoff),
-            # ('/cf/hl/land', self.cli_land),
-            ('/cf/emergency_stop', self.cli_emerg),
+            # ('hl/takeoff', self.cli_takeoff),
+            # ('hl/land', self.cli_land),
+            ('stop', self.cli_emerg),
         ]:
             if not cli.service_is_ready():
                 self.get_logger().warn(f'Service not ready yet: {name}')
@@ -240,7 +240,7 @@ class CfKeyboardTeleop(Node):
     def _call_trajectory_async(self, traj_type: str):
         """RunTrajectory 서비스 호출 (trajectory_type 인자 전달)"""
         if not self.cli_traj.service_is_ready():
-            self.get_logger().warn('Service not ready: /cf/traj/run')
+            self.get_logger().warn('Service not ready: traj/run')
             return
         
         req = RunTrajectory.Request()
@@ -250,9 +250,9 @@ class CfKeyboardTeleop(Node):
         def _done_cb(fut):
             try:
                 resp = fut.result()
-                self.get_logger().info(f'/cf/traj/run({traj_type}) → success={resp.success}, msg="{resp.message}"')
+                self.get_logger().info(f'traj/run({traj_type}) → success={resp.success}, msg="{resp.message}"')
             except Exception as e:
-                self.get_logger().error(f'/cf/traj/run({traj_type}) failed: {e}')
+                self.get_logger().error(f'traj/run({traj_type}) failed: {e}')
 
         future.add_done_callback(_done_cb)
 
@@ -423,7 +423,7 @@ class CfKeyboardTeleop(Node):
         if key == ' ':
             self.get_logger().warn('[KEY] EMERGENCY STOP')
             self._seq_stop_event.set() # 시퀀스 루프 탈출 신호
-            self._call_trigger_async(self.cli_emerg, '/cf/emergency_stop')
+            self._call_trigger_async(self.cli_emerg, 'stop')
             return
 
         if key == '0':
@@ -493,7 +493,7 @@ class CfKeyboardTeleop(Node):
                 x, y, z, yaw = self._x, self._y, self._z, self._yaw
 
         if not have_odom:
-            self.get_logger().warn('No /cf/odom yet, cannot move. Wait for odom.')
+            self.get_logger().warn('No odom yet, cannot move. Wait for odom.')
             return
 
         target_x, target_y, target_z, target_yaw = x, y, z, yaw

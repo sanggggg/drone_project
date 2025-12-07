@@ -5,6 +5,7 @@ def generate_launch_description():
     return LaunchDescription([
         Node(
             package='mini_drone',
+            namespace='cf',
             executable='cf_bridge',
             name='cf_bridge',
             output='screen',

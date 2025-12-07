@@ -178,33 +178,33 @@ class QuizControllerNode(Node):
 
         # ---- Subscribers ----
         self.sub_cf_odom = self.create_subscription(
-            Odometry, '/cf/odom', self._cf_odom_cb, qos_best_effort
+            Odometry, 'cf/odom', self._cf_odom_cb, qos_best_effort
         )
         self.sub_anafi_state = self.create_subscription(
-            String, '/anafi/drone/state', self._anafi_state_cb, qos_best_effort
+            String, 'anafi/drone/state', self._anafi_state_cb, qos_best_effort
         )
         self.sub_quiz_answer = self.create_subscription(
-            String, '/quiz/answer', self._quiz_answer_cb, qos_reliable
+            String, 'quiz/answer', self._quiz_answer_cb, qos_reliable
         )
         # Command subscriber (from web UI)
         self.sub_command = self.create_subscription(
-            String, '/quiz/command', self._command_cb, qos_reliable
+            String, 'quiz/command', self._command_cb, qos_reliable
         )
 
         # ---- Publishers ----
-        self.pub_state = self.create_publisher(String, '/quiz/state', qos_reliable)
-        self.pub_cf_takeoff = self.create_publisher(Float32, '/cf/hl/takeoff', qos_reliable)
-        self.pub_cf_land = self.create_publisher(Float32, '/cf/hl/land', qos_reliable)
-        self.pub_cf_goto = self.create_publisher(PoseStamped, '/cf/hl/goto', qos_reliable)
-        self.pub_quiz_answer = self.create_publisher(String, '/quiz/answer', qos_reliable)
-        self.pub_goto    = self.create_publisher(PoseStamped, '/cf/hl/goto', qos_reliable)
-        self.pub_quiz_beep = self.create_publisher(String, '/quiz/beep', qos_reliable)
+        self.pub_state = self.create_publisher(String, 'quiz/state', qos_reliable)
+        self.pub_cf_takeoff = self.create_publisher(Float32, 'cf/hl/takeoff', qos_reliable)
+        self.pub_cf_land = self.create_publisher(Float32, 'cf/hl/land', qos_reliable)
+        self.pub_cf_goto = self.create_publisher(PoseStamped, 'cf/hl/goto', qos_reliable)
+        self.pub_quiz_answer = self.create_publisher(String, 'quiz/answer', qos_reliable)
+        self.pub_goto    = self.create_publisher(PoseStamped, 'cf/hl/goto', qos_reliable)
+        self.pub_quiz_beep = self.create_publisher(String, 'quiz/beep', qos_reliable)
         # ---- Service Clients ----
-        self.cli_anafi_takeoff = self.create_client(Trigger, '/anafi/drone/takeoff')
-        self.cli_anafi_land = self.create_client(Trigger, '/anafi/drone/land')
-        self.cli_anafi_emergency = self.create_client(Trigger, '/anafi/drone/emergency')
-        self.cli_cf_stop = self.create_client(Trigger, '/cf/stop')
-        self.cli_cf_traj = self.create_client(RunTrajectory, '/cf/traj/run')
+        self.cli_anafi_takeoff = self.create_client(Trigger, 'anafi/drone/takeoff')
+        self.cli_anafi_land = self.create_client(Trigger, 'anafi/drone/land')
+        self.cli_anafi_emergency = self.create_client(Trigger, 'anafi/drone/emergency')
+        self.cli_cf_stop = self.create_client(Trigger, 'cf/stop')
+        self.cli_cf_traj = self.create_client(RunTrajectory, 'cf/traj/run')
 
         #-----others------
         self._have_odom = True
@@ -231,7 +231,7 @@ class QuizControllerNode(Node):
         
         # OCR enable publisher (to YOLO node)
         self.pub_ocr_enable = self.create_publisher(
-            Bool, '/anafi/yolo/ocr_enable', qos_reliable
+            Bool, 'anafi/yolo/ocr_enable', qos_reliable
         )
 
         # ---- Timers ----

@@ -227,20 +227,20 @@ class ControlManager:
         self.estop_latched = False
 
         # ---- Publishers ----
-        self.pub_estop = self.node.create_publisher(Bool, '/cf/estop', _qos_sense())
+        self.pub_estop = self.node.create_publisher(Bool, 'estop', _qos_sense())
 
         # ---- Subscriptions (HL) ----
-        self.node.create_subscription(Float32, '/cf/hl/takeoff', self._on_hl_takeoff, _qos_ctrl())
-        self.node.create_subscription(Float32, '/cf/hl/land',    self._on_hl_land,    _qos_ctrl())
-        self.node.create_subscription(PoseStamped, '/cf/hl/goto', self._on_hl_goto,   _qos_ctrl())
+        self.node.create_subscription(Float32, 'hl/takeoff', self._on_hl_takeoff, _qos_ctrl())
+        self.node.create_subscription(Float32, 'hl/land',    self._on_hl_land,    _qos_ctrl())
+        self.node.create_subscription(PoseStamped, 'hl/goto', self._on_hl_goto,   _qos_ctrl())
 
         # ---- Services ----
-        self.node.create_service(Trigger, '/cf/stop',         self._srv_stop_cb)
-        self.node.create_service(Trigger, '/cf/estop_reset',  self._srv_estop_reset)
-        self.node.create_service(Trigger, '/cf/notify_stop',  self._srv_notify_cb)
+        self.node.create_service(Trigger, 'stop',         self._srv_stop_cb)
+        self.node.create_service(Trigger, 'estop_reset',  self._srv_estop_reset)
+        self.node.create_service(Trigger, 'notify_stop',  self._srv_notify_cb)
 
         # ---- Trajectory Service (단일 서비스, type 인자로 선택) ----
-        self.node.create_service(RunTrajectory, '/cf/traj/run', self._srv_traj_run)
+        self.node.create_service(RunTrajectory, 'traj/run', self._srv_traj_run)
 
         if self.dry_run:
             self.node.get_logger().info('[DRY-RUN] 실제 전송 없이 로그만 출력합니다. (-p dry_run:=false 로 전송 허용 가능)')

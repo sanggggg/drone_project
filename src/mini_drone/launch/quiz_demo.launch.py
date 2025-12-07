@@ -173,10 +173,11 @@ def generate_launch_description():
     )
 
     # ==========================================================================
-    # Crazyflie Bridge Node
+    # Crazyflie Bridge Node (namespace 'cf')
     # ==========================================================================
     cf_bridge_node = Node(
         package='mini_drone',
+        namespace='cf',
         executable='cf_bridge',
         name='cf_bridge',
         output='screen',
@@ -211,11 +212,16 @@ def generate_launch_description():
             'max_detections': 100,
             'classes': [62, 63],  # TV/monitor classes
             'ocr_enabled': LaunchConfiguration('yolo_ocr_enabled'),
-            'ocr_classes': [],
+            # 'ocr_classes': [],  # 빈 리스트는 launch에서 지원 안됨 - 노드 기본값 사용
             'ocr_buffer_size': 10,
             'ocr_timeout_sec': 4.0,
             'ocr_confidence_threshold': 90.0,
         }],
+        # Remap quiz topics to global namespace
+        remappings=[
+            ('quiz/state', '/quiz/state'),
+            ('quiz/answer', '/quiz/answer'),
+        ],
     )
 
     # ==========================================================================
@@ -249,6 +255,27 @@ def generate_launch_description():
             'mini_only_mode': LaunchConfiguration('mini_only_mode'),
             'vertical_mode': LaunchConfiguration('vertical_mode'),
         }],
+        # Remap to connect with correct namespaces
+        remappings=[
+            # Crazyflie topics (cf namespace)
+            ('cf/odom', '/cf/odom'),
+            ('cf/hl/takeoff', '/cf/hl/takeoff'),
+            ('cf/hl/land', '/cf/hl/land'),
+            ('cf/hl/goto', '/cf/hl/goto'),
+            ('cf/stop', '/cf/stop'),
+            ('cf/traj/run', '/cf/traj/run'),
+            # ANAFI topics (anafi namespace)
+            ('anafi/drone/state', '/anafi/drone/state'),
+            ('anafi/drone/takeoff', '/anafi/drone/takeoff'),
+            ('anafi/drone/land', '/anafi/drone/land'),
+            ('anafi/drone/emergency', '/anafi/drone/emergency'),
+            ('anafi/yolo/ocr_enable', '/anafi/yolo/ocr_enable'),
+            # Quiz topics (global)
+            ('quiz/answer', '/quiz/answer'),
+            ('quiz/command', '/quiz/command'),
+            ('quiz/state', '/quiz/state'),
+            ('quiz/beep', '/quiz/beep'),
+        ],
     )
 
     return LaunchDescription([

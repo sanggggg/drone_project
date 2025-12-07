@@ -253,7 +253,7 @@ class YoloDetectionNode(Node):
         # Subscribe to quiz state to only publish answers when in DETECTING state
         self.sub_quiz_state = self.create_subscription(
             String,
-            '/quiz/state',
+            'quiz/state',
             self._on_quiz_state,
             qos_detection
         )
@@ -280,9 +280,9 @@ class YoloDetectionNode(Node):
             String, 'yolo/tracking_status', qos_detection
         )
         
-        # Quiz answer publisher (String) - absolute topic path to avoid namespace
+        # Quiz answer publisher (String)
         self.pub_quiz_answer = self.create_publisher(
-            String, '/quiz/answer', qos_detection
+            String, 'quiz/answer', qos_detection
         )
 
         # ---------- Logging ----------
@@ -294,11 +294,11 @@ class YoloDetectionNode(Node):
         self.get_logger().info(f"  Confidence:       {self.confidence}")
         self.get_logger().info(f"  Inference Rate:   {self.inference_rate} Hz")
         self.get_logger().info(f"  IOU Threshold:    {self.iou_threshold}")
-        self.get_logger().info(f"  Camera Topic:     /anafi/{self.camera_topic}")
-        self.get_logger().info(f"  Annotated Topic:  /anafi/yolo/image")
-        self.get_logger().info(f"  Detections Topic: /anafi/yolo/detections (JSON)")
-        self.get_logger().info(f"  OCR Topic:        /anafi/yolo/ocr_image")
-        self.get_logger().info(f"  Quiz Answer Topic: /quiz/answer")
+        self.get_logger().info(f"  Camera Topic:     {self.camera_topic}")
+        self.get_logger().info(f"  Annotated Topic:  yolo/image")
+        self.get_logger().info(f"  Detections Topic: yolo/detections (JSON)")
+        self.get_logger().info(f"  OCR Topic:        yolo/ocr_image")
+        self.get_logger().info(f"  Quiz Answer Topic: quiz/answer")
         self.get_logger().info(f"  OCR Enabled:      {self.ocr_enabled and self.ocr is not None}")
         if self.ocr_enabled and self.ocr:
             self.get_logger().info(f"  OCR Classes:      {self.ocr_classes if self.ocr_classes else 'all/full image'}")

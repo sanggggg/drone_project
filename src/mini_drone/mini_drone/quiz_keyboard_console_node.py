@@ -65,18 +65,18 @@ class QuizKeyboardConsole(Node):
 
         # ---- Publishers ----
         self.pub_command = self.create_publisher(
-            String, '/quiz/command', qos_reliable
+            String, 'quiz/command', qos_reliable
         )
         self.pub_answer = self.create_publisher(
-            String, '/quiz/answer', qos_reliable
+            String, 'quiz/answer', qos_reliable
         )
         self.pub_ocr_enable = self.create_publisher(
-            Bool, '/anafi/yolo/ocr_enable', qos_reliable
+            Bool, 'anafi/yolo/ocr_enable', qos_reliable
         )
 
         # ---- Subscribers ----
         self.sub_state = self.create_subscription(
-            String, '/quiz/state', self._state_cb, qos_best_effort
+            String, 'quiz/state', self._state_cb, qos_best_effort
         )
 
         # ---- Status Timer (1Hz) ----

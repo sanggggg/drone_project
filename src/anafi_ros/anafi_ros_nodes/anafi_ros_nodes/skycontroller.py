@@ -37,8 +37,8 @@ class SkyController3(Node):
 
 		self.node.get_logger().info("skycontroller is running...")
 		
-		self.pub_state = self.node.create_publisher(String, "/skycontroller/state")
-		self.pub_skycontroller = self.node.create_publisher(SkyControllerCommand, "/skycontroller/command")
+		self.pub_state = self.node.create_publisher(String, "state")
+		self.pub_skycontroller = self.node.create_publisher(SkyControllerCommand, "command")
 		
 		# Connect to the SkyController		
 		self.skyctrl = olympe.SkyController(SKYCTRL_IP)
