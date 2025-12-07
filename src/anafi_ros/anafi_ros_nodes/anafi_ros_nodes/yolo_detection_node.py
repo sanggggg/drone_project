@@ -5,6 +5,7 @@
 #
 # - Subscribes:
 #     /anafi/camera/image  (sensor_msgs/Image)
+#     /quiz/state          (std_msgs/String)    - Quiz game state (only publish answer when DETECTING)
 #
 # - Publishes:
 #     /anafi/yolo/image           (sensor_msgs/Image)  - Annotated image with bboxes
@@ -209,6 +210,7 @@ class YoloDetectionNode(Node):
         self._fps = 0.0
         self._fps_update_time = time.time()
         self._fps_frame_count = 0
+        self._quiz_state = ""  # Current quiz game state
 
         # ---------- QoS Profiles ----------
         qos_image = _make_qos(depth=5, reliable=False)  # Best effort for image streaming
@@ -220,6 +222,14 @@ class YoloDetectionNode(Node):
             self.camera_topic,
             self._on_camera_image,
             qos_image
+        )
+        
+        # Subscribe to quiz state to only publish answers when in DETECTING state
+        self.sub_quiz_state = self.create_subscription(
+            String,
+            '/quiz/state',
+            self._on_quiz_state,
+            qos_detection
         )
 
         # ---------- Publishers ----------
@@ -263,8 +273,13 @@ class YoloDetectionNode(Node):
             self.get_logger().info(f"  OCR Classes:      {self.ocr_classes if self.ocr_classes else 'all/full image'}")
             self.get_logger().info(f"  OCR Buffer Size:  {self.ocr_buffer_size}")
             self.get_logger().info(f"  OCR Timeout:      {self.ocr_timeout_sec}s")
-            self.get_logger().info(f"  OCR Conf Thresh:  {self.ocr_confidence_threshold}%")
+            self.get_logger().info(f"  OCR Conf Thresh:  {self.ocr_confidence_threshold}%"                )
         self.get_logger().info("=" * 60)
+
+    def _on_quiz_state(self, msg: String):
+        """Callback for quiz state updates."""
+        self._quiz_state = msg.data
+        self.get_logger().debug(f"[Quiz State] Current state: {self._quiz_state}")
 
     def _on_camera_image(self, msg: Image):
         """
@@ -484,11 +499,14 @@ class YoloDetectionNode(Node):
                 processed, mode_result = self.ocr_buffer.check_timeout()
                 if processed and mode_result:
                     self.get_logger().info(f"[OCR] ★★★ FINAL RESULT (timeout): '{mode_result}' ★★★")
-                    # Publish to /quiz/answer topic
-                    answer_msg = String()
-                    answer_msg.data = mode_result
-                    self.pub_quiz_answer.publish(answer_msg)
-                    self.get_logger().info(f"[OCR] Published answer to /quiz/answer: '{mode_result}'")
+                    # Publish to /quiz/answer topic only if state is DETECTING
+                    if self._quiz_state == "DETECTING":
+                        answer_msg = String()
+                        answer_msg.data = mode_result
+                        self.pub_quiz_answer.publish(answer_msg)
+                        self.get_logger().info(f"[OCR] Published answer to /quiz/answer: '{mode_result}' (state: {self._quiz_state})")
+                    else:
+                        self.get_logger().info(f"[OCR] Skipped publishing answer (current state: {self._quiz_state}, expected: DETECTING)")
             return
         
         # Process detected regions
@@ -527,11 +545,14 @@ class YoloDetectionNode(Node):
                     if should_process and mode_result:
                         # Batch processing completed, log final result
                         self.get_logger().info(f"[OCR] ★★★ FINAL RESULT: '{mode_result}' ★★★")
-                        # Publish to /quiz/answer topic
-                        answer_msg = String()
-                        answer_msg.data = mode_result
-                        self.pub_quiz_answer.publish(answer_msg)
-                        self.get_logger().info(f"[OCR] Published answer to /quiz/answer: '{mode_result}'")
+                        # Publish to /quiz/answer topic only if state is DETECTING
+                        if self._quiz_state == "DETECTING":
+                            answer_msg = String()
+                            answer_msg.data = mode_result
+                            self.pub_quiz_answer.publish(answer_msg)
+                            self.get_logger().info(f"[OCR] Published answer to /quiz/answer: '{mode_result}' (state: {self._quiz_state})")
+                        else:
+                            self.get_logger().info(f"[OCR] Skipped publishing answer (current state: {self._quiz_state}, expected: DETECTING)")
                     
                     # Publish cropped image for visualization
                     try:
