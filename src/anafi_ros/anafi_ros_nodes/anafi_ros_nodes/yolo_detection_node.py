@@ -429,11 +429,6 @@ class YoloDetectionNode(Node):
             inference_time_ms = result.speed['inference']
             preprocess_time_ms = result.speed['preprocess']
             postprocess_time_ms = result.speed['postprocess']
-            self.get_logger().info(f"Inference time: {inference_time_ms:.2f} ms")
-            self.get_logger().info(f"Preprocess time: {preprocess_time_ms:.2f} ms")
-            self.get_logger().info(f"Postprocess time: {postprocess_time_ms:.2f} ms")
-            self.get_logger().info(f"Total time: {inference_time_ms + preprocess_time_ms + postprocess_time_ms:.2f} ms")
-            self.get_logger().info(f"self ocr enabled: {self.ocr is not None}")
             # Get annotated image with bboxes
             annotated_image = result.plot()
             
@@ -460,15 +455,6 @@ class YoloDetectionNode(Node):
             if self.ocr is not None and should_run_ocr:
                 self._run_ocr(cv_image, result, msg.header)
             
-            # Log periodically
-            if self._inference_count % 1 == 0:
-                det_data = json.loads(detections_json)
-                n_dets = len(det_data.get('detections', []))
-                self.get_logger().info(
-                    f"Inference #{self._inference_count}: {n_dets} detections, "
-                    f"FPS: {self._fps:.1f}"
-                )
-
     def _process_tracking(self, result):
         """
         Process YOLO detection results for tracking.

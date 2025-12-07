@@ -226,7 +226,6 @@ class QuizControllerNode(Node):
                 dx_step=0.15,
             ),
             on_tracking_complete=self._on_tracking_complete,
-            namespace='anafi'  # Relative path for team namespace compatibility
         )
         
         # OCR enable publisher (to YOLO node)

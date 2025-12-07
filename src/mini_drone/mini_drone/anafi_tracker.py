@@ -11,15 +11,15 @@ Features:
     - 이동 완료 후 안정화 대기
     - 실제 이동 검증 (position feedback)
 
-Topics:
+Topics (상대 경로 - anafi/ 접두사 사용):
     Subscribe:
-        - /anafi/yolo/tracking_status (String, JSON)
-        - /anafi/drone/moveby_done (Bool)
-        - /anafi/drone/position_local (PointStamped)
+        - anafi/yolo/tracking_status (String, JSON)
+        - anafi/drone/moveby_done (Bool)
+        - anafi/drone/position_local (PointStamped)
     
     Publish:
-        - /anafi/yolo/tracking_enable (Bool)
-        - /anafi/drone/moveby (MoveByCommand)
+        - anafi/yolo/tracking_enable (Bool)
+        - anafi/drone/moveby (MoveByCommand)
 """
 
 import json
@@ -88,19 +88,16 @@ class AnafiTracker:
         node: Node,
         config: Optional[TrackingConfig] = None,
         on_tracking_complete: Optional[Callable[[], None]] = None,
-        namespace: str = '/anafi'
     ):
         """
         Args:
-            node: ROS2 Node 인스턴스
+            node: ROS2 Node 인스턴스 (namespace가 설정되어 있어야 함)
             config: Tracking 설정
             on_tracking_complete: 추적 완료 시 호출될 콜백
-            namespace: ANAFI 토픽 네임스페이스
         """
         self._node = node
         self._config = config or TrackingConfig()
         self._on_complete = on_tracking_complete
-        self._namespace = namespace
         self._logger = node.get_logger()
         
         # ---- State ----
@@ -124,25 +121,25 @@ class AnafiTracker:
         qos_ctrl = _make_qos(depth=10, reliable=True)
         qos_sensor = _make_qos(depth=10, reliable=False)
         
-        # ---- Publishers ----
+        # ---- Publishers (anafi/ 상대 경로) ----
         self.pub_tracking_enable = node.create_publisher(
-            Bool, f'{namespace}/yolo/tracking_enable', qos_ctrl
+            Bool, 'yolo/tracking_enable', qos_ctrl
         )
         self.pub_moveby = node.create_publisher(
-            MoveByCommand, f'{namespace}/drone/moveby', qos_ctrl
+            MoveByCommand, 'anafi/drone/moveby', qos_ctrl
         )
         
-        # ---- Subscribers ----
+        # ---- Subscribers (anafi/ 상대 경로) ----
         self.sub_tracking_status = node.create_subscription(
-            String, f'{namespace}/yolo/tracking_status',
+            String, 'yolo/tracking_status',
             self._on_tracking_status, qos_ctrl
         )
         self.sub_moveby_done = node.create_subscription(
-            Bool, f'{namespace}/drone/moveby_done',
+            Bool, 'anafi/drone/moveby_done',
             self._on_moveby_done, qos_ctrl
         )
         self.sub_position = node.create_subscription(
-            PointStamped, f'{namespace}/drone/position_local',
+            PointStamped, 'anafi/drone/position_local',
             self._on_position, qos_sensor
         )
         
