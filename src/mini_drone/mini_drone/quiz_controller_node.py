@@ -196,6 +196,7 @@ class QuizControllerNode(Node):
         self.pub_cf_goto = self.create_publisher(PoseStamped, '/cf/hl/goto', qos_reliable)
         self.pub_quiz_answer = self.create_publisher(String, '/quiz/answer', qos_reliable)
         self.pub_goto    = self.create_publisher(PoseStamped, '/cf/hl/goto', qos_reliable)
+        self.pub_quiz_beep = self.create_publisher(String, '/quiz/beep', qos_reliable)
         # ---- Service Clients ----
         self.cli_anafi_takeoff = self.create_client(Trigger, '/anafi/drone/takeoff')
         self.cli_anafi_land = self.create_client(Trigger, '/anafi/drone/land')
@@ -245,6 +246,13 @@ class QuizControllerNode(Node):
             f'GOTO → x={target_x:.2f}, y={target_y:.2f}, z={target_z:.2f}, yaw={math.degrees(target_yaw):.1f}deg'
         )
 
+    def _publish_beep(self, message: str):
+        """Publish beep message to /quiz/beep topic"""
+        msg = String()
+        msg.data = message
+        self.pub_quiz_beep.publish(msg)
+        self.get_logger().debug(f'Published beep: {message}')
+
     def _cf_odom_cb(self, msg: Odometry):
         """Crazyflie odometry 콜백"""
         with self._lock:
@@ -276,7 +284,8 @@ class QuizControllerNode(Node):
                     send_goto=self._send_goto,
                     get_odom=self.get_odom,
                     has_odom=self.has_odom,
-                    logger=self.get_logger()
+                    logger=self.get_logger(),
+                    publish_beep=self._publish_beep
                 )
                 self.waypoint_exec.run_sequence(list(answer))
             else:                

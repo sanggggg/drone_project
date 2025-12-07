@@ -12,11 +12,13 @@ class WaypointExecutor:
         logger,
         tolerance=0.15,
         poll_dt=0.1,
+        publish_beep=None,  # (str) -> None, optional callback to publish beep messages
     ):
         self._get_odom = get_odom
         self._has_odom = has_odom
         self._send_goto = send_goto
         self._logger = logger
+        self._publish_beep = publish_beep
 
         self._tol = tolerance
         self._dt = poll_dt
@@ -163,8 +165,13 @@ class WaypointExecutor:
                 return
 
             self._logger.info('WaypointExecutor: starting in 3 seconds')
-            for i in digit_list:
-                waypoints = self._waypoints[i]
+            for digit_idx, digit in enumerate(digit_list):
+                waypoints = self._waypoints[digit]
+                
+                # Publish "start" when starting to draw each character
+                if self._publish_beep:
+                    self._publish_beep("start")
+                    self._logger.info(f'Publishing beep: start (digit {digit})')
 
                 for _ in range(10):
                     if self._stop_event.is_set():
@@ -188,6 +195,11 @@ class WaypointExecutor:
                             if self._stop_event.is_set():
                                 return
                             time.sleep(self._dt)
+
+                # Publish "end" when finishing each character
+                if self._publish_beep:
+                    self._publish_beep("end")
+                    self._logger.info(f'Publishing beep: end (digit {digit})')
 
             self._logger.info('WaypointExecutor: completed')
 
