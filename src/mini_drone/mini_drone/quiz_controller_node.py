@@ -493,8 +493,6 @@ class QuizControllerNode(Node):
 
         # Mini takeoff
         msg = Float32()
-        if self.vertical_mode:
-            self.mini_home_z += 1.0  # 수직 모드: 홈 z + 1.0m
         msg.data = self.mini_home_z
         self.pub_cf_takeoff.publish(msg)
         self.get_logger().info(f"Mini takeoff command sent (target z={self.mini_home_z}m)")
@@ -523,6 +521,11 @@ class QuizControllerNode(Node):
     def _handle_emergency_stop_locked(self):
         """Emergency Stop - 모든 드론 즉시 정지 (lock 보유 상태에서 호출)"""
         self.get_logger().warn("!!! EMERGENCY STOP !!!")
+
+        # Waypoint executor 중지
+        if hasattr(self, 'waypoint_exec') and self.waypoint_exec is not None:
+            self.waypoint_exec.stop()
+            self.get_logger().info("Waypoint executor stopped")
 
         # ANAFI tracker 중지
         if self._anafi_tracker.is_tracking:
@@ -649,6 +652,15 @@ class QuizControllerNode(Node):
     def _handle_return_home_locked(self):
         """Drawing 중 'answer_correct': 홈으로 복귀 (lock 보유 상태)"""
         self.get_logger().info("Answer confirmed correct. Returning mini drone to home...")
+        
+        # Correct beep sound 발행
+        self._publish_beep("correct")
+        
+        # Waypoint executor 중지
+        if hasattr(self, 'waypoint_exec') and self.waypoint_exec is not None:
+            self.waypoint_exec.stop()
+            self.get_logger().info("Waypoint executor stopped")
+        
         self._goto_mini_home()
         self.pending_home_return = True
         self._home_return_start_time = time.time()
@@ -657,6 +669,11 @@ class QuizControllerNode(Node):
     def _initiate_finish_locked(self):
         """착륙 시작 및 Finish 전환 예약 (lock 보유 상태)"""
         self.get_logger().info("Finishing operation: Landing both drones...")
+        
+        # Waypoint executor 중지
+        if hasattr(self, 'waypoint_exec') and self.waypoint_exec is not None:
+            self.waypoint_exec.stop()
+            self.get_logger().info("Waypoint executor stopped")
         
         # ANAFI tracker 중지
         if self._anafi_tracker.is_tracking:

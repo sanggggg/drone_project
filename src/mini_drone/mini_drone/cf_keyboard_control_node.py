@@ -406,7 +406,7 @@ class CfKeyboardTeleop(Node):
         if key == 't':
             self.get_logger().info('[KEY] Takeoff')
             msg = Float32()
-            msg.data = 1.4  # 원하는 takeoff 높이(m)
+            msg.data = 0.4  # 원하는 takeoff 높이(m)
             self.pub_takeoff.publish(msg)
             return
 

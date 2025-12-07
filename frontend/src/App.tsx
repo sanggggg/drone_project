@@ -49,9 +49,8 @@ function App() {
         setDetectingStartTime(new Date());
         setDisplayedAnswer(null); // Clear previous answer when entering DETECTING
       } else {
-        // Clear answer when leaving DETECTING state
         setDetectingStartTime(null);
-        setDisplayedAnswer(null);
+        // Keep displayedAnswer visible even after leaving DETECTING state
       }
       
       setPrevState(currentState);
@@ -66,7 +65,7 @@ function App() {
     enabled: isConnected,
   });
 
-  // Only show answers that come after entering DETECTING state
+  // Show answers that come after entering DETECTING state
   useEffect(() => {
     if (currentState === 'DETECTING') {
       if (quizAnswer?.data && detectingStartTime && quizAnswerUpdate) {
@@ -75,10 +74,8 @@ function App() {
           setDisplayedAnswer(quizAnswer.data);
         }
       }
-    } else {
-      // Clear answer when not in DETECTING state
-      setDisplayedAnswer(null);
     }
+    // Don't clear answer when leaving DETECTING state - keep it displayed
   }, [quizAnswer, quizAnswerUpdate, currentState, detectingStartTime]);
 
   // Crazyflie Odometry topic
@@ -280,7 +277,7 @@ function App() {
               lastUpdate={quizStateUpdate}
             />
             <QuizAnswerDisplay
-              answer={currentState === 'DETECTING' ? displayedAnswer : null}
+              answer={currentState === 'DRAWING' ? displayedAnswer : null}
               currentState={currentState}
               lastUpdate={quizAnswerUpdate}
             />

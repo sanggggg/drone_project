@@ -43,7 +43,7 @@ def generate_launch_description():
 
     uri_arg = DeclareLaunchArgument(
         'uri',
-        default_value='radio://0/80/2M/E7E7E7E711',
+        default_value='radio://0/80/2M/E7E7E7E709',
         description='Crazyflie radio URI'
     )
 

@@ -28,7 +28,7 @@ class WaypointExecutor:
         self._lock = threading.Lock()
         self.init_x = self._get_odom()[0]
         self.init_y = self._get_odom()[1]
-        self.init_z = self._get_odom()[2]
+        self.init_z = self._get_odom()[2] + 1.0
         self.init_yaw = self._get_odom()[3]
         self._send_goto(self.init_x, self.init_y, self.init_z, self.init_yaw)
         self._waypoints = {
@@ -168,10 +168,6 @@ class WaypointExecutor:
             for digit_idx, digit in enumerate(digit_list):
                 waypoints = self._waypoints[digit]
                 
-                # Publish "start" when starting to draw each character
-                if self._publish_beep:
-                    self._publish_beep("start")
-                    self._logger.info(f'Publishing beep: start (digit {digit})')
 
                 for _ in range(10):
                     if self._stop_event.is_set():
@@ -179,6 +175,10 @@ class WaypointExecutor:
                     time.sleep(0.1)
 
                 for i, (x, y, z, yaw, wait_t) in enumerate(waypoints):
+                    if i == 1 and self._publish_beep:
+                        self._publish_beep("start")
+                        self._logger.info(f'Publishing beep: start (digit {digit})')
+
                     if self._stop_event.is_set():
                         return
 
