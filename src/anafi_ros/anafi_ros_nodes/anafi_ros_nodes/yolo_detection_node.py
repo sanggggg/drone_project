@@ -62,7 +62,7 @@ try:
     from anafi_ros_nodes.ocr_utils import OCRProcessor, OCRBufferManager, crop_from_xyxy, validate_white_screen
     OCR_AVAILABLE = True
 except ImportError as e:
-    self.get_logger().info(f"OCR import error: {e}")
+    print(f"[YOLO] OCR import error: {e}")
     OCR_AVAILABLE = False
 
 
@@ -241,12 +241,15 @@ class YoloDetectionNode(Node):
             qos_detection
         )
         
-        # OCR enable subscriber (from keyboard controller)
-        self._ocr_enabled_by_key = False  # OCR enabled by 'n' key
+        # OCR enable subscriber (from quiz_controller or frontend)
+        self._ocr_enabled_by_key = False  # OCR enabled by command
         self.sub_ocr_enable = self.create_subscription(
             Bool,
             'yolo/ocr_enable',
             self._on_ocr_enable,
+            qos_detection
+        )
+        
         # Subscribe to quiz state to only publish answers when in DETECTING state
         self.sub_quiz_state = self.create_subscription(
             String,
@@ -275,6 +278,8 @@ class YoloDetectionNode(Node):
         # Tracking status publisher (JSON with offset info)
         self.pub_tracking_status = self.create_publisher(
             String, 'yolo/tracking_status', qos_detection
+        )
+        
         # Quiz answer publisher (String) - absolute topic path to avoid namespace
         self.pub_quiz_answer = self.create_publisher(
             String, '/quiz/answer', qos_detection
@@ -312,12 +317,12 @@ class YoloDetectionNode(Node):
             self._target_detected = False
 
     def _on_ocr_enable(self, msg: Bool):
-        """Callback for OCR enable/disable from keyboard controller ('n' key)."""
+        """Callback for OCR enable/disable from quiz_controller or frontend."""
         self._ocr_enabled_by_key = msg.data
         if self._ocr_enabled_by_key:
-            self.get_logger().warning("[OCR] OCR mode ENABLED by keyboard ('n' key)")
+            self.get_logger().warning("[OCR] OCR mode ENABLED - starting recognition...")
         else:
-            self.get_logger().warning("[OCR] OCR mode DISABLED by keyboard")
+            self.get_logger().warning("[OCR] OCR mode DISABLED")
 
     def _publish_tracking_status(self, detected: bool, 
                                   offset_x: float = 0.0, offset_y: float = 0.0,

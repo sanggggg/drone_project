@@ -15,6 +15,7 @@ const MOCK_ANSWERS = [
 
 export const CommandPanel: React.FC<CommandPanelProps> = ({ ros, isConnected, currentState }) => {
   const [showMockDropdown, setShowMockDropdown] = useState(false);
+  const [ocrEnabled, setOcrEnabled] = useState(false);
 
   const publishCommand = useCallback((command: string) => {
     if (!ros || !isConnected) {
@@ -49,15 +50,43 @@ export const CommandPanel: React.FC<CommandPanelProps> = ({ ros, isConnected, cu
     setShowMockDropdown(false);
   }, [ros, isConnected]);
 
+  const toggleOcr = useCallback(() => {
+    if (!ros || !isConnected) {
+      console.warn('ROS not connected');
+      return;
+    }
+
+    const newState = !ocrEnabled;
+    
+    // Publish to /anafi/yolo/ocr_enable topic (Bool)
+    const topic = new ROSLIB.Topic<{ data: boolean }>({
+      ros,
+      name: '/anafi/yolo/ocr_enable',
+      messageType: 'std_msgs/Bool',
+    });
+
+    topic.publish({ data: newState });
+    setOcrEnabled(newState);
+    console.log(`OCR ${newState ? 'ENABLED' : 'DISABLED'}`);
+  }, [ros, isConnected, ocrEnabled]);
+
   const state = currentState?.toUpperCase() || 'UNKNOWN';
 
   // Button states based on current quiz state
   const canSetup = state === 'UNINIT' || state === 'UNKNOWN';
   const canDetect = state === 'IDLE';
+  const canOcr = state === 'DETECTING';  // OCR available during DETECTING
   const canMockAnswer = state === 'DETECTING';
   const canAnswerCorrect = state === 'DRAWING';
   const canFinish = ['IDLE', 'DETECTING', 'DRAWING'].includes(state);
   const canEmergency = state !== 'FINISH';
+
+  // Reset OCR state when leaving DETECTING
+  React.useEffect(() => {
+    if (state !== 'DETECTING' && ocrEnabled) {
+      setOcrEnabled(false);
+    }
+  }, [state, ocrEnabled]);
 
   return (
     <div className="command-panel">
@@ -85,6 +114,16 @@ export const CommandPanel: React.FC<CommandPanelProps> = ({ ros, isConnected, cu
           <span className="cmd-btn__icon">◎</span>
           <span className="cmd-btn__label">Detect</span>
           <span className="cmd-btn__hint">Start</span>
+        </button>
+
+        <button
+          className={`cmd-btn cmd-btn--ocr ${canOcr ? (ocrEnabled ? 'active' : '') : 'disabled'}`}
+          onClick={toggleOcr}
+          disabled={!isConnected || !canOcr}
+        >
+          <span className="cmd-btn__icon">{ocrEnabled ? '🔍' : '📷'}</span>
+          <span className="cmd-btn__label">{ocrEnabled ? 'OCR On' : 'OCR'}</span>
+          <span className="cmd-btn__hint">{ocrEnabled ? 'Active' : 'Scan'}</span>
         </button>
 
         <div className="cmd-btn-wrapper">

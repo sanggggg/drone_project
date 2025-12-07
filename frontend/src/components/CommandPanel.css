@@ -138,6 +138,43 @@
   color: #00d4ff;
 }
 
+/* OCR Button */
+.cmd-btn--ocr {
+  border-color: rgba(255, 136, 0, 0.3);
+}
+
+.cmd-btn--ocr:hover:not(.disabled) {
+  border-color: rgba(255, 170, 0, 0.5);
+  box-shadow: 0 0 12px rgba(255, 170, 0, 0.2);
+}
+
+.cmd-btn--ocr .cmd-btn__icon {
+  color: #ff8800;
+}
+
+.cmd-btn--ocr.active {
+  border-color: rgba(0, 255, 136, 0.6);
+  background: rgba(0, 255, 136, 0.15);
+  animation: ocr-pulse 1.5s ease-in-out infinite;
+}
+
+.cmd-btn--ocr.active .cmd-btn__icon {
+  color: #00ff88;
+}
+
+.cmd-btn--ocr.active .cmd-btn__label {
+  color: #00ff88;
+}
+
+@keyframes ocr-pulse {
+  0%, 100% {
+    box-shadow: 0 0 8px rgba(0, 255, 136, 0.3);
+  }
+  50% {
+    box-shadow: 0 0 20px rgba(0, 255, 136, 0.5);
+  }
+}
+
 /* Correct Button */
 .cmd-btn--correct {
   border-color: rgba(170, 100, 255, 0.3);

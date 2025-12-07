@@ -9,13 +9,14 @@ ANAFI와 Crazyflie 두 드론을 조율하여 퀴즈 탐지 및 궤적 그리기
 States:
     UNINIT   - 모든 드론이 땅에 있는 초기 상태
     IDLE     - 모든 드론이 takeoff하여 홈 위치에 있는 상태
-    DETECTING - ANAFI가 퀴즈를 탐지하는 상태
+    DETECTING - ANAFI가 퀴즈를 탐지하는 상태 (auto-tracking 포함)
     DRAWING  - Mini drone이 답에 해당하는 궤적을 그리는 상태
     FINISH   - 모든 드론이 착륙한 최종 상태
 
 Commands (via /quiz/command topic):
     'start'          - UnInit→Idle (시작)
-    'detect'         - Idle→Detecting (탐지 시작)
+    'detect'         - Idle→Detecting (탐지 시작 + auto-tracking)
+    'start_ocr'      - DETECTING에서 OCR 시작 (tracking 완료 후)
     'answer_correct' - Drawing→Idle (답 확인 후 복귀)
     'finish'         - 종료 (→Finish)
     'emergency'      - Emergency Stop (모든 드론 즉시 정지)
@@ -35,11 +36,12 @@ from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 
 from nav_msgs.msg import Odometry
-from std_msgs.msg import String, Float32
+from std_msgs.msg import String, Float32, Bool
 from geometry_msgs.msg import PoseStamped
 from std_srvs.srv import Trigger
 from mini_drone_interfaces.srv import RunTrajectory
 from mini_drone.waypoint_executor import WaypointExecutor
+from mini_drone.anafi_tracker import AnafiTracker, TrackingConfig, TrackingPhase
 
 class QuizState(Enum):
     """퀴즈 컨트롤러 상태"""
@@ -206,6 +208,31 @@ class QuizControllerNode(Node):
 
         #-----others------
         self._have_odom = True
+        
+        # ---- ANAFI Tracker ----
+        # Tracking 완료 시 콜백을 통해 OCR 대기 상태로 전환
+        self._tracking_complete = False
+        self._anafi_tracker = AnafiTracker(
+            node=self,
+            config=TrackingConfig(
+                move_scale=0.8,
+                min_move=0.15,
+                max_move=0.25,
+                tracking_interval=0.5,
+                stabilize_time=1.0,
+                target_bbox_width=270.0,
+                target_bbox_height=200.0,
+                bbox_tolerance=0.15,
+                dx_step=0.15,
+            ),
+            on_tracking_complete=self._on_tracking_complete,
+            namespace='/anafi'
+        )
+        
+        # OCR enable publisher (to YOLO node)
+        self.pub_ocr_enable = self.create_publisher(
+            Bool, '/anafi/yolo/ocr_enable', qos_reliable
+        )
 
         # ---- Timers ----
         self.create_timer(0.1, self._check_state_timer)  # 10Hz 상태 체크
@@ -214,8 +241,24 @@ class QuizControllerNode(Node):
         mode_str = "[MINI-ONLY MODE]" if self.mini_only_mode else "[DUAL-DRONE MODE]"
         self.get_logger().info(f'Quiz Controller initialized {mode_str}. State: UNINIT')
         self.get_logger().info('Listening for commands on /quiz/command topic')
+        self.get_logger().info('ANAFI Tracker integrated for auto-detecting')
 
     # ==================== Callbacks ====================
+    
+    def _on_tracking_complete(self):
+        """AnafiTracker에서 tracking 완료 시 호출되는 콜백"""
+        with self._lock:
+            if self.state != QuizState.DETECTING:
+                self.get_logger().warn(
+                    f"[Tracking] Complete callback in unexpected state: {self.state.name}"
+                )
+                return
+            
+            self._tracking_complete = True
+            self.get_logger().warning(
+                "[Tracking] ★ Auto-tracking COMPLETE! Ready for OCR. ★\n"
+                "    → Press 'Start OCR' button in frontend to begin OCR."
+            )
     
     def has_odom(self):
         with self._lock:
@@ -319,6 +362,12 @@ class QuizControllerNode(Node):
                     self._handle_start_detecting_locked()
                 else:
                     self.get_logger().warn(f"Command 'detect' ignored in state {current_state.name}")
+
+            elif command == 'start_ocr':
+                if current_state == QuizState.DETECTING:
+                    self._handle_start_ocr_locked()
+                else:
+                    self.get_logger().warn(f"Command 'start_ocr' ignored in state {current_state.name}")
 
             elif command == 'answer_correct':
                 if current_state == QuizState.DRAWING:
@@ -473,6 +522,15 @@ class QuizControllerNode(Node):
         """Emergency Stop - 모든 드론 즉시 정지 (lock 보유 상태에서 호출)"""
         self.get_logger().warn("!!! EMERGENCY STOP !!!")
 
+        # ANAFI tracker 중지
+        if self._anafi_tracker.is_tracking:
+            self._anafi_tracker.stop_tracking()
+        
+        # OCR 비활성화
+        ocr_msg = Bool()
+        ocr_msg.data = False
+        self.pub_ocr_enable.publish(ocr_msg)
+
         # Mini drone E-STOP
         if self.cli_cf_stop.service_is_ready():
             req = Trigger.Request()
@@ -498,6 +556,7 @@ class QuizControllerNode(Node):
         self.state = QuizState.FINISH
         self.pending_transition = None
         self.pending_home_return = False
+        self._tracking_complete = False
         self._log_state_change()
 
     def _goto_mini_home(self):
@@ -554,11 +613,36 @@ class QuizControllerNode(Node):
     def _handle_start_detecting_locked(self):
         """Idle → Detecting 전환 처리 (lock 보유 상태)"""
         self.state = QuizState.DETECTING
+        self._tracking_complete = False
+        
         if self.mini_only_mode:
-            self.get_logger().info("Detecting started - waiting for /quiz/answer...")
+            self.get_logger().info("Detecting started (MINI-ONLY) - waiting for /quiz/answer...")
         else:
-            self.get_logger().info("Detecting started - waiting for /quiz/answer...")
+            # ANAFI auto-tracking 시작
+            self._anafi_tracker.start_tracking()
+            self.get_logger().info(
+                "Detecting started - Auto-tracking ANAFI to center target...\n"
+                "    → Tracking will auto-complete when target is centered."
+            )
         self._log_state_change()
+
+    def _handle_start_ocr_locked(self):
+        """DETECTING 상태에서 OCR 시작 (lock 보유 상태)"""
+        if not self._tracking_complete and not self.mini_only_mode:
+            self.get_logger().warn(
+                "[OCR] Cannot start OCR - tracking not complete yet!\n"
+                "    → Wait for auto-tracking to complete first."
+            )
+            return
+        
+        # OCR 활성화 메시지 발행
+        msg = Bool()
+        msg.data = True
+        self.pub_ocr_enable.publish(msg)
+        
+        self.get_logger().warning(
+            "[OCR] ★ OCR STARTED! Waiting for quiz answer... ★"
+        )
 
     def _handle_return_home_locked(self):
         """Drawing 중 'answer_correct': 홈으로 복귀 (lock 보유 상태)"""
@@ -571,11 +655,22 @@ class QuizControllerNode(Node):
     def _initiate_finish_locked(self):
         """착륙 시작 및 Finish 전환 예약 (lock 보유 상태)"""
         self.get_logger().info("Finishing operation: Landing both drones...")
+        
+        # ANAFI tracker 중지
+        if self._anafi_tracker.is_tracking:
+            self._anafi_tracker.stop_tracking()
+        
+        # OCR 비활성화
+        ocr_msg = Bool()
+        ocr_msg.data = False
+        self.pub_ocr_enable.publish(ocr_msg)
+        
         self._land_both()
         delay = self.land_duration + self.settle_time
         self._schedule_transition(QuizState.FINISH, delay)
         self.pending_home_return = False  # 홈 복귀 대기 취소
         self._home_return_start_time = None
+        self._tracking_complete = False
         self._log_state_change()
 
 
