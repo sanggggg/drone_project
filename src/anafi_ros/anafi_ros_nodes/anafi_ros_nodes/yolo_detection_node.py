@@ -57,7 +57,7 @@ except ImportError:
 
 # OCR utilities
 try:
-    from anafi_ros_nodes.ocr_utils import OCRProcessor, crop_from_xyxy
+    from anafi_ros_nodes.ocr_utils import OCRProcessor, OCRBufferManager, crop_from_xyxy
     OCR_AVAILABLE = True
 except ImportError:
     OCR_AVAILABLE = False
@@ -124,11 +124,14 @@ class YoloDetectionNode(Node):
         self.declare_parameter('camera_topic', 'camera/image')
         self.declare_parameter('iou_threshold', 0.45)
         self.declare_parameter('max_detections', 100)
-        self.declare_parameter('classes', [62])  # Empty list means all classes
+        self.declare_parameter('classes', [62, 63])  # Empty list means all classes
         
         # OCR parameters
         self.declare_parameter('ocr_enabled', True)
         self.declare_parameter('ocr_classes', [])  # Empty = all classes or full image
+        self.declare_parameter('ocr_buffer_size', 10)  # Buffer size for batch processing
+        self.declare_parameter('ocr_timeout_sec', 4.0)  # Timeout for batch processing
+        self.declare_parameter('ocr_confidence_threshold', 90.0)  # Min confidence to accept
 
         self.model_path = self.get_parameter('model').value
         self.device = self.get_parameter('device').value
@@ -143,6 +146,10 @@ class YoloDetectionNode(Node):
         # OCR parameters
         self.ocr_enabled = bool(self.get_parameter('ocr_enabled').value)
         self.ocr_classes = self.get_parameter('ocr_classes').value
+        self.ocr_buffer_size = int(self.get_parameter('ocr_buffer_size').value)
+        self.ocr_timeout_sec = float(self.get_parameter('ocr_timeout_sec').value)
+        self.ocr_confidence_threshold = float(self.get_parameter('ocr_confidence_threshold').value)
+        
         # Calculate minimum interval between inferences
         self.min_inference_interval = 1.0 / self.inference_rate if self.inference_rate > 0 else 0.0
 
@@ -167,15 +174,28 @@ class YoloDetectionNode(Node):
         # ---------- CV Bridge ----------
         self.bridge = CvBridge()
         
-        # ---------- OCR Processor ----------
+        # ---------- OCR Processor and Buffer Manager ----------
         self.ocr = None
+        self.ocr_buffer = None
         if self.ocr_enabled:
             if OCR_AVAILABLE:
                 self.ocr = OCRProcessor(
                     model_name="microsoft/trocr-base-printed",
                     use_gpu=True,
-                    preprocess=False,
-                    logger=None
+                    preprocess=True,
+                    logger=self.get_logger()
+                )
+                # Create buffer manager for batch OCR processing
+                self.ocr_buffer = OCRBufferManager(
+                    ocr_processor=self.ocr,
+                    buffer_size=self.ocr_buffer_size,
+                    timeout_sec=self.ocr_timeout_sec,
+                    confidence_threshold=self.ocr_confidence_threshold,
+                    logger=self.get_logger()
+                )
+                self.get_logger().info(
+                    f"[OCR] Buffer initialized: size={self.ocr_buffer_size}, "
+                    f"timeout={self.ocr_timeout_sec}s, conf_threshold={self.ocr_confidence_threshold}%"
                 )
             else:
                 self.get_logger().warn("OCR requested but ocr_utils module not available")
@@ -234,6 +254,9 @@ class YoloDetectionNode(Node):
         self.get_logger().info(f"  OCR Enabled:      {self.ocr_enabled and self.ocr is not None}")
         if self.ocr_enabled and self.ocr:
             self.get_logger().info(f"  OCR Classes:      {self.ocr_classes if self.ocr_classes else 'all/full image'}")
+            self.get_logger().info(f"  OCR Buffer Size:  {self.ocr_buffer_size}")
+            self.get_logger().info(f"  OCR Timeout:      {self.ocr_timeout_sec}s")
+            self.get_logger().info(f"  OCR Conf Thresh:  {self.ocr_confidence_threshold}%")
         self.get_logger().info("=" * 60)
 
     def _on_camera_image(self, msg: Image):
@@ -430,8 +453,14 @@ class YoloDetectionNode(Node):
 
     def _run_ocr(self, cv_image: np.ndarray, result, header: Header):
         """
-        Run OCR on detected regions or full image if no detections.
-        Publishes the preprocessed (thresholded) images used for OCR and logs OCR results.
+        Buffer-based OCR processing on detected regions.
+        
+        Logic:
+        1. Skip if no YOLO detection
+        2. Add cropped images to buffer
+        3. Process batch when buffer is full or timeout occurs
+        4. Filter by confidence >= 90%, remove non-alphabet chars
+        5. Return mode (most frequent) result
         
         Args:
             cv_image: Original BGR image
@@ -441,73 +470,65 @@ class YoloDetectionNode(Node):
         has_detections = result.boxes is not None and len(result.boxes) > 0
         
         if not has_detections:
-            # No detections - run OCR on full image
-            # Preprocess and run OCR on the full image
-            text, preprocessed_img = self.ocr.recognize_model(cv_image)
-            if text:
-                self.get_logger().info(f"[OCR] Full image: '{text}'")
-            else:
-                self.get_logger().info(f"Failed to publish OCR image")
-            # Publish preprocessed full image
-            try:
-                ros_image = self.bridge.cv2_to_imgmsg(preprocessed_img, encoding='bgr8')
-                ros_image.header = header
-                ros_image.header.frame_id = 'ocr_full_image'
-                self.pub_ocr_image.publish(ros_image)
-            except Exception as e:
-                self.get_logger().error(f"Failed to publish OCR image: {e}")
-        else:
-            # Run OCR on each detected region
-            boxes = result.boxes
-            processed_any = False
+            # No detections - skip OCR, check timeout for pending buffer
+            self.get_logger().info("[OCR] No YOLO detection, skipping OCR")
+            # Still check if buffer needs timeout processing
+            if self.ocr_buffer:
+                processed, mode_result = self.ocr_buffer.check_timeout()
+                if processed and mode_result:
+                    self.get_logger().info(f"[OCR] ★★★ FINAL RESULT (timeout): '{mode_result}' ★★★")
+            return
+        
+        # Process detected regions
+        boxes = result.boxes
+        processed_any = False
+        
+        for i in range(len(boxes)):
+            class_id = int(boxes.cls[i].cpu().numpy())
+            class_name = self.class_names.get(class_id, str(class_id))
+            confidence = float(boxes.conf[i].cpu().numpy())
             
-            for i in range(len(boxes)):
-                class_id = int(boxes.cls[i].cpu().numpy())
-                class_name = self.class_names.get(class_id, str(class_id))
-                confidence = float(boxes.conf[i].cpu().numpy())
-                
-                # Check if we should process this class
-                if self.ocr_classes and class_name not in self.ocr_classes:
-                    continue
-                
-                processed_any = True
-                
-                # Get bounding box
-                box = boxes.xyxy[i].cpu().numpy()
-                x1, y1, x2, y2 = map(int, box)
-                
-                # Crop region
-                cropped = crop_from_xyxy(cv_image, x1, y1, x2, y2, padding=5)
-                
-                if cropped is not None and cropped.size > 0:
-                    # Preprocess crop and run OCR on the preprocessed image
-                    text, preprocessed_img = self.ocr.recognize_model(cropped)
+            # Check if we should process this class
+            if self.ocr_classes and class_name not in self.ocr_classes:
+                continue
+            
+            processed_any = True
+            
+            # Get bounding box
+            box = boxes.xyxy[i].cpu().numpy()
+            x1, y1, x2, y2 = map(int, box)
+            
+            # Crop region
+            cropped = crop_from_xyxy(cv_image, x1, y1, x2, y2, padding=5)
+            
+            if cropped is not None and cropped.size > 0:
+                # Add to buffer instead of immediate OCR
+                if self.ocr_buffer:
+                    should_process, mode_result = self.ocr_buffer.add_image(cropped)
                     
-                    # Log OCR result
-                    if text:
-                        self.get_logger().info(
-                            f"[OCR] {class_name}({confidence:.2f}) @ [{x1},{y1},{x2},{y2}]: '{text}'"
-                        )
-                    else:
-                        self.get_logger().info(f"Failed to publish OCR image")
-                    # Publish preprocessed cropped image
+                    if should_process and mode_result:
+                        # Batch processing completed, log final result
+                        self.get_logger().info(f"[OCR] ★★★ FINAL RESULT: '{mode_result}' ★★★")
+                    
+                    # Publish cropped image for visualization
                     try:
-                        ros_image = self.bridge.cv2_to_imgmsg(preprocessed_img, encoding='bgr8')
+                        ros_image = self.bridge.cv2_to_imgmsg(cropped, encoding='bgr8')
                         ros_image.header = header
                         ros_image.header.frame_id = f'ocr_{class_name}_{i}'
                         self.pub_ocr_image.publish(ros_image)
                     except Exception as e:
                         self.get_logger().error(f"Failed to publish OCR image: {e}")
-            
-            # If no matching classes found, run OCR on full image
-            if not processed_any:
-                text, preprocessed_img = self.ocr.recognize_model(cv_image)
-                if text:
-                    self.get_logger().info(f"[OCR] Full image (no matching class): '{text}'")
-                else:
-                    self.get_logger().info(f"Failed to publish OCR image")               
+        
+        # If no matching classes found, add full image to buffer
+        if not processed_any:
+            if self.ocr_buffer:
+                should_process, mode_result = self.ocr_buffer.add_image(cv_image)
+                
+                if should_process and mode_result:
+                    self.get_logger().info(f"[OCR] ★★★ FINAL RESULT (full image): '{mode_result}' ★★★")
+                
                 try:
-                    ros_image = self.bridge.cv2_to_imgmsg(preprocessed_img, encoding='bgr8')
+                    ros_image = self.bridge.cv2_to_imgmsg(cv_image, encoding='bgr8')
                     ros_image.header = header
                     ros_image.header.frame_id = 'ocr_full_image'
                     self.pub_ocr_image.publish(ros_image)
