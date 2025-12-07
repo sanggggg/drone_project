@@ -204,7 +204,7 @@ class QuizControllerNode(Node):
         self.cli_cf_traj = self.create_client(RunTrajectory, '/cf/traj/run')
 
         #-----others------
-        self._have_odom = False
+        self._have_odom = True
 
         # ---- Timers ----
         self.create_timer(0.1, self._check_state_timer)  # 10Hz 상태 체크

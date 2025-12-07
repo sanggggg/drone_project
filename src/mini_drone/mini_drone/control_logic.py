@@ -231,7 +231,7 @@ class ControlManager:
         self.hl_durations = hl_durations or {
             'takeoff': 2.0,
             'land': 2.0,
-            'goto': 1.0,
+            'goto': 2.5,
         }
 
         # ---- E-STOP latch state ----

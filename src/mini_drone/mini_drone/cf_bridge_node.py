@@ -58,7 +58,7 @@ class CfBridgeNode(Node):
         # High-level durations
         self.declare_parameter('hl_takeoff_duration_s', 2.0)
         self.declare_parameter('hl_land_duration_s', 2.0)
-        self.declare_parameter('hl_goto_duration_s', 1.0)
+        self.declare_parameter('hl_goto_duration_s', 2.5)
 
         p = lambda n: self.get_parameter(n).get_parameter_value()
         self.uri = p('uri').string_value
@@ -69,7 +69,7 @@ class CfBridgeNode(Node):
         self.arm_on_start = bool(p('arm_on_start').bool_value or True)
         self.hltake_dur = float(p('hl_takeoff_duration_s').double_value or 2.0)
         self.hlland_dur = float(p('hl_land_duration_s').double_value or 2.0)
-        self.hlgoto_dur = float(p('hl_goto_duration_s').double_value or 1.0)
+        self.hlgoto_dur = float(p('hl_goto_duration_s').double_value or 2.5)
 
         # ---- QoS ----
         qos = QoSProfile(depth=10)
