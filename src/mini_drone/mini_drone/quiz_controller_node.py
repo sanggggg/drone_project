@@ -105,6 +105,7 @@ class QuizControllerNode(Node):
         # Mini only mode (ANAFI 없이 테스트)
         self.declare_parameter('mini_only_mode', False)
         self.declare_parameter('vertical_mode', True)
+        self.declare_parameter('world_frame', 'map')
 
         # 파라미터 로드
         self.mini_home_x = float(self.get_parameter('mini_home_x').value)
@@ -127,6 +128,7 @@ class QuizControllerNode(Node):
 
         self.mini_only_mode = bool(self.get_parameter('mini_only_mode').value)
         self.vertical_mode = bool(self.get_parameter('vertical_mode').value)
+        self.world_frame = self.get_parameter('world_frame').value
 
         # Answer → Trajectory 매핑
         self.answer_trajectory_map = {
