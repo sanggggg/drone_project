@@ -2,8 +2,10 @@
 Quiz Demo Launch File
 
 전체 퀴즈 데모 시스템을 실행합니다:
-  1. cf_bridge - Crazyflie 텔레메트리 및 제어 브리지
-  2. quiz_controller - 상태 머신 기반 퀴즈 컨트롤러
+  1. anafi - ANAFI ROS2 bridge (Olympe SDK)
+  2. cf_bridge - Crazyflie 텔레메트리 및 제어 브리지
+  3. yolo_detection - YOLO 기반 객체 인식 노드
+  4. quiz_controller - 상태 머신 기반 퀴즈 컨트롤러
 
 사용법:
   ros2 launch mini_drone quiz_demo.launch.py
@@ -14,21 +16,116 @@ Quiz Demo Launch File
   # 수직 모드
   ros2 launch mini_drone quiz_demo.launch.py vertical_mode:=True
 
-  # 파라미터 변경 예시
-  ros2 launch mini_drone quiz_demo.launch.py operation_timeout_min:=3.0
+  # ANAFI 파라미터 변경 예시
+  ros2 launch mini_drone quiz_demo.launch.py anafi_ip:='192.168.42.1' anafi_model:='ai'
+
+  # YOLO 파라미터 변경 예시
+  ros2 launch mini_drone quiz_demo.launch.py yolo_model:='yolov8n.pt' yolo_confidence:=0.5
+
+  # Crazyflie URI 변경 예시
+  ros2 launch mini_drone quiz_demo.launch.py uri:='radio://0/80/2M/E7E7E7E709'
 """
 
+import os
+
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
-from launch.launch_description_sources import PythonLaunchDescriptionSource
+from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from ament_index_python.packages import get_package_share_directory
-import os
 
 
 def generate_launch_description():
-    # Launch arguments
+    # ==========================================================================
+    # ANAFI Launch Arguments
+    # ==========================================================================
+    anafi_namespace_arg = DeclareLaunchArgument(
+        'anafi_namespace',
+        default_value='anafi',
+        description='Namespace for ANAFI drone'
+    )
+
+    anafi_ip_arg = DeclareLaunchArgument(
+        'anafi_ip',
+        default_value='192.168.53.1',  # SkyController: '192.168.53.1', Direct: '192.168.42.1', Sphinx: '10.202.0.1'
+        description='IP address of the ANAFI device'
+    )
+
+    anafi_model_arg = DeclareLaunchArgument(
+        'anafi_model',
+        default_value='ai',  # {'4k', 'thermal', 'usa', 'ai'}
+        description='Model of the ANAFI drone'
+    )
+
+    # ==========================================================================
+    # Crazyflie Launch Arguments
+    # ==========================================================================
+    uri_arg = DeclareLaunchArgument(
+        'uri',
+        default_value='radio://0/80/2M/E7E7E7E709',
+        description='Crazyflie radio URI'
+    )
+
+    cf_period_ms_arg = DeclareLaunchArgument(
+        'cf_period_ms',
+        default_value='100',
+        description='Crazyflie telemetry logging period (ms)'
+    )
+
+    cf_publish_rate_hz_arg = DeclareLaunchArgument(
+        'cf_publish_rate_hz',
+        default_value='20.0',
+        description='Crazyflie ROS publish rate (Hz)'
+    )
+
+    cf_hl_goto_duration_s_arg = DeclareLaunchArgument(
+        'cf_hl_goto_duration_s',
+        default_value='5.1',
+        description='Crazyflie high-level goto duration (s)'
+    )
+
+    # ==========================================================================
+    # YOLO Detection Launch Arguments
+    # ==========================================================================
+    yolo_model_arg = DeclareLaunchArgument(
+        'yolo_model',
+        default_value='yolo11m_fhd.engine',
+        description='YOLO model path or name'
+    )
+
+    yolo_device_arg = DeclareLaunchArgument(
+        'yolo_device',
+        default_value='cuda',
+        description='Torch device hint: "", "cpu", "cuda"'
+    )
+
+    yolo_confidence_arg = DeclareLaunchArgument(
+        'yolo_confidence',
+        default_value='0.25',
+        description='Detection confidence threshold'
+    )
+
+    yolo_inference_rate_arg = DeclareLaunchArgument(
+        'yolo_inference_rate',
+        default_value='10',
+        description='Max inference rate in Hz'
+    )
+
+    yolo_publish_compressed_arg = DeclareLaunchArgument(
+        'yolo_publish_compressed',
+        default_value='true',
+        description='Whether to publish compressed image'
+    )
+
+    yolo_ocr_enabled_arg = DeclareLaunchArgument(
+        'yolo_ocr_enabled',
+        default_value='true',
+        description='Enable OCR on detected regions'
+    )
+
+    # ==========================================================================
+    # Quiz Controller Launch Arguments
+    # ==========================================================================
     operation_timeout_arg = DeclareLaunchArgument(
         'operation_timeout_min',
         default_value='5.0',
@@ -39,12 +136,6 @@ def generate_launch_description():
         'mini_home_z',
         default_value='0.4',
         description='Mini drone home altitude (m)'
-    )
-
-    uri_arg = DeclareLaunchArgument(
-        'uri',
-        default_value='radio://0/80/2M/E7E7E7E709',
-        description='Crazyflie radio URI'
     )
 
     mini_only_mode_arg = DeclareLaunchArgument(
@@ -59,7 +150,31 @@ def generate_launch_description():
         description='Vertical mode (True: vertical, False: horizontal)'
     )
 
+    # ==========================================================================
+    # ANAFI Node
+    # ==========================================================================
+    anafi_config = os.path.join(
+        get_package_share_directory('anafi_ros_nodes'),
+        'params.yaml'
+    )
+
+    anafi_node = Node(
+        package='anafi_ros_nodes',
+        namespace=LaunchConfiguration('anafi_namespace'),
+        executable='anafi',
+        name='anafi',
+        output='screen',
+        emulate_tty=True,
+        arguments=['--ros-args', '--log-level', 'INFO'],
+        parameters=[anafi_config,
+            {'drone/model': LaunchConfiguration('anafi_model')},
+            {'device/ip': LaunchConfiguration('anafi_ip')}
+        ]
+    )
+
+    # ==========================================================================
     # Crazyflie Bridge Node
+    # ==========================================================================
     cf_bridge_node = Node(
         package='mini_drone',
         executable='cf_bridge',
@@ -67,21 +182,50 @@ def generate_launch_description():
         output='screen',
         parameters=[{
             'uri': LaunchConfiguration('uri'),
-            'period_ms': 100,
-            'publish_rate_hz': 20.0,
+            'period_ms': LaunchConfiguration('cf_period_ms'),
+            'publish_rate_hz': LaunchConfiguration('cf_publish_rate_hz'),
             'use_state_estimate': True,
             'hl_takeoff_duration_s': 2.0,
             'hl_land_duration_s': 2.0,
-            'hl_goto_duration_s': 5.1,
+            'hl_goto_duration_s': LaunchConfiguration('cf_hl_goto_duration_s'),
         }],
     )
+
+    # ==========================================================================
+    # YOLO Detection Node
+    # ==========================================================================
+    yolo_detection_node = Node(
+        package='anafi_ros_nodes',
+        namespace=LaunchConfiguration('anafi_namespace'),
+        executable='yolo_detection',
+        name='yolo_detection',
+        output='screen',
+        parameters=[{
+            'model': LaunchConfiguration('yolo_model'),
+            'device': LaunchConfiguration('yolo_device'),
+            'confidence': LaunchConfiguration('yolo_confidence'),
+            'inference_rate': LaunchConfiguration('yolo_inference_rate'),
+            'publish_compressed': LaunchConfiguration('yolo_publish_compressed'),
+            'camera_topic': 'camera/image',
+            'iou_threshold': 0.45,
+            'max_detections': 100,
+            'classes': [62, 63],  # TV/monitor classes
+            'ocr_enabled': LaunchConfiguration('yolo_ocr_enabled'),
+            'ocr_classes': [],
+            'ocr_buffer_size': 10,
+            'ocr_timeout_sec': 4.0,
+            'ocr_confidence_threshold': 90.0,
+        }],
+    )
+
+    # ==========================================================================
     # Quiz Controller Node
+    # ==========================================================================
     quiz_controller_node = Node(
         package='mini_drone',
         executable='quiz_controller',
         name='quiz_controller',
         output='screen',
-        # prefix='xterm -e',  # 별도 터미널에서 실행 (키보드 입력용)
         parameters=[{
             # Mini drone 홈 위치
             'mini_home_x': 0.0,
@@ -108,14 +252,36 @@ def generate_launch_description():
     )
 
     return LaunchDescription([
-        # Launch arguments
+        # ==========================================================================
+        # Launch Arguments
+        # ==========================================================================
+        # ANAFI arguments
+        anafi_namespace_arg,
+        anafi_ip_arg,
+        anafi_model_arg,
+        # Crazyflie arguments
+        uri_arg,
+        cf_period_ms_arg,
+        cf_publish_rate_hz_arg,
+        cf_hl_goto_duration_s_arg,
+        # YOLO arguments
+        yolo_model_arg,
+        yolo_device_arg,
+        yolo_confidence_arg,
+        yolo_inference_rate_arg,
+        yolo_publish_compressed_arg,
+        yolo_ocr_enabled_arg,
+        # Quiz controller arguments
         operation_timeout_arg,
         mini_home_z_arg,
-        uri_arg,
         mini_only_mode_arg,
         vertical_mode_arg,
+
+        # ==========================================================================
         # Nodes
+        # ==========================================================================
+        anafi_node,
         cf_bridge_node,
+        yolo_detection_node,
         quiz_controller_node,
     ])
-
