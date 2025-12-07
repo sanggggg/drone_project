@@ -57,7 +57,7 @@ except ImportError:
 
 # OCR utilities
 try:
-    from anafi_ros_nodes.ocr_utils import OCRProcessor, OCRBufferManager, crop_from_xyxy
+    from anafi_ros_nodes.ocr_utils import OCRProcessor, OCRBufferManager, crop_from_xyxy, validate_white_screen
     OCR_AVAILABLE = True
 except ImportError:
     OCR_AVAILABLE = False
@@ -502,6 +502,12 @@ class YoloDetectionNode(Node):
             cropped = crop_from_xyxy(cv_image, x1, y1, x2, y2, padding=5)
             
             if cropped is not None and cropped.size > 0:
+                # Validate white screen ratio
+                is_valid, white_ratio = validate_white_screen(cropped, min_white_ratio=0.3)
+                if not is_valid:
+                    self.get_logger().debug(f"[OCR] Skipping detection (white ratio: {white_ratio:.2f} < 0.3)")
+                    continue
+                
                 # Add to buffer instead of immediate OCR
                 if self.ocr_buffer:
                     should_process, mode_result = self.ocr_buffer.add_image(cropped)
@@ -518,23 +524,6 @@ class YoloDetectionNode(Node):
                         self.pub_ocr_image.publish(ros_image)
                     except Exception as e:
                         self.get_logger().error(f"Failed to publish OCR image: {e}")
-        
-        # If no matching classes found, add full image to buffer
-        if not processed_any:
-            if self.ocr_buffer:
-                should_process, mode_result = self.ocr_buffer.add_image(cv_image)
-                
-                if should_process and mode_result:
-                    self.get_logger().info(f"[OCR] ★★★ FINAL RESULT (full image): '{mode_result}' ★★★")
-                
-                try:
-                    ros_image = self.bridge.cv2_to_imgmsg(cv_image, encoding='bgr8')
-                    ros_image.header = header
-                    ros_image.header.frame_id = 'ocr_full_image'
-                    self.pub_ocr_image.publish(ros_image)
-                except Exception as e:
-                    self.get_logger().error(f"Failed to publish OCR image: {e}")
-
 
 def main(args=None):
     rclpy.init(args=args)

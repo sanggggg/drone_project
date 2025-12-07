@@ -327,6 +327,42 @@ def crop_white_region(image: np.ndarray,
     return bbox_crop[wy1:wy2, wx1:wx2].copy()
 
 
+def validate_white_screen(image: np.ndarray, 
+                          min_white_ratio: float = 0.5,
+                          white_threshold: int = 200) -> tuple:
+    """
+    Validate if the cropped image contains sufficient white area.
+    
+    Args:
+        image: BGR image (cropped detection region)
+        min_white_ratio: Minimum ratio of white pixels required (0.0-1.0)
+        white_threshold: Pixel value threshold to consider as white (0-255)
+        
+    Returns:
+        (is_valid: bool, white_ratio: float)
+    """
+    if image is None or image.size == 0:
+        return False, 0.0
+    
+    # Convert to grayscale
+    if len(image.shape) == 3:
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    else:
+        gray = image
+    
+    # Count white pixels
+    white_pixels = np.sum(gray > white_threshold)
+    total_pixels = gray.size
+    
+    if total_pixels == 0:
+        return False, 0.0
+    
+    white_ratio = white_pixels / total_pixels
+    is_valid = white_ratio >= min_white_ratio
+    
+    return is_valid, white_ratio
+
+
 # --------------------------------------------------------
 # Batch OCR Buffer Manager
 # --------------------------------------------------------
@@ -368,6 +404,7 @@ class OCRBufferManager:
         self._buffer = []  # List of (image, preprocessed_image) tuples
         self._lock = Lock()
         self._first_add_time = None
+        self._is_processing = False  # Flag to block new images during processing
         
     def _log(self, msg, error=False):
         if self.logger:
@@ -388,6 +425,11 @@ class OCRBufferManager:
             - If should_process is False, image was added to buffer
         """
         if image is None or image.size == 0:
+            return False, None
+        
+        # Skip if currently processing a batch
+        if self._is_processing:
+            self._log("[OCR Buffer] Skipping - batch processing in progress")
             return False, None
         
         with self._lock:
@@ -453,6 +495,7 @@ class OCRBufferManager:
         Process all images in buffer and return mode result.
         Must be called with lock held.
         """
+        self._is_processing = True
         if len(self._buffer) == 0:
             return None
         
@@ -464,13 +507,15 @@ class OCRBufferManager:
         for img in self._buffer:
             text, confidence = self._run_single_ocr(img)
             if text and confidence >= self.confidence_threshold:
-                # Clean text: keep only alphabets
-                cleaned = self._clean_text(text)
+                # Detect type and clean accordingly
+                is_expr = self._is_expression(text)
+                cleaned = self._clean_result(text)
                 if cleaned:
                     results.append((cleaned, confidence))
-                    self._log(f"[OCR Buffer] Valid result: '{cleaned}' ({confidence:.2f}%)")
+                    type_str = "expr" if is_expr else "text"
+                    self._log(f"[OCR Buffer] Valid result ({type_str}): '{cleaned}' ({confidence:.2f}%)")
                 else:
-                    self._log(f"[OCR Buffer] Filtered (no alpha): '{text}' ({confidence:.2f}%)")
+                    self._log(f"[OCR Buffer] Filtered (empty after clean): '{text}' ({confidence:.2f}%)")
             elif text:
                 self._log(f"[OCR Buffer] Filtered (low conf): '{text}' ({confidence:.2f}%)")
         
@@ -480,6 +525,7 @@ class OCRBufferManager:
         
         if not results:
             self._log("[OCR Buffer] No valid results after filtering")
+            self._is_processing = False
             return None
         
         # Find mode (most frequent result)
@@ -488,6 +534,7 @@ class OCRBufferManager:
         mode_text, mode_count = counter.most_common(1)[0]
         
         self._log(f"[OCR Buffer] Mode result: '{mode_text}' (count: {mode_count}/{len(results)})")
+        self._is_processing = False
         return mode_text
     
     def _run_single_ocr(self, image: np.ndarray) -> tuple:
@@ -528,9 +575,242 @@ class OCRBufferManager:
             return "", 0.0
     
     @staticmethod
+    def _is_expression(text: str) -> bool:
+        """
+        Determine if the text is a mathematical expression.
+        
+        Expression criteria (any of):
+        - Contains only digits (single number like "5", "123")
+        - Contains digits and operators (+, -, *, x, X, ×, ÷, /, =)
+        
+        Returns:
+            True if expression, False if text
+        """
+        # Check if it's purely numeric (single number)
+        cleaned = re.sub(r'[^0-9+\-*/×÷=xX]', '', text)
+        if cleaned and cleaned.isdigit():
+            return True
+        
+        # Check if it has digits and operators
+        has_digit = bool(re.search(r'\d', text))
+        has_operator = bool(re.search(r'[+\-*/×÷=xX]', text))
+        return has_digit and has_operator
+    
+    @staticmethod
     def _clean_text(text: str) -> str:
-        """Remove all non-alphabet characters from text."""
-        return re.sub(r'[^a-zA-Z]', '', text)
+        """Remove all non-alphabet characters from text (for text mode)."""
+        return re.sub(r'[^A-Z]', '', text)
+    
+    @staticmethod
+    def _clean_expression(text: str) -> str:
+        """
+        Clean and normalize a mathematical expression.
+        
+        - Keep only digits and operators
+        - Normalize multiplication symbols (x, X, *) to ×
+        - Normalize division symbols (/) to ÷
+        - Single digit numbers only
+        
+        Returns:
+            Cleaned expression string
+        """
+        # First, normalize multiplication symbols
+        text = re.sub(r'[xX*]', '×', text)
+        # Normalize division
+        text = re.sub(r'/', '÷', text)
+        # Keep only digits and operators (+, -, ×, ÷, =)
+        cleaned = re.sub(r'[^0-9+\-×÷=]', '', text)
+        return cleaned
+    
+    def _parse_expression(self, expr: str) -> list:
+        """
+        Parse a mathematical expression with multi-digit numbers.
+        
+        Supports: +, -, ×, ÷
+        Valid formats:
+        - Single number: "5" -> [5]
+        - Two numbers + one operator: "3+5" -> [3, '+', 5]
+        - Three numbers + two operators: "3+5×2" -> [3, '+', 5, '×', 2]
+        
+        Args:
+            expr: Cleaned expression string
+            
+        Returns:
+            List of tokens [num, op, num, ...] or None if parsing fails
+        """
+        original_expr = expr
+        # Remove '=' if present
+        expr = expr.replace('=', '')
+        
+        if len(expr) == 0:
+            self._log(f"[OCR] Parse failed (empty): '{original_expr}'")
+            return None
+        
+        # Tokenize: split into numbers and operators
+        tokens = []
+        current_num = ""
+        
+        for char in expr:
+            if char.isdigit():
+                current_num += char
+            elif char in '+\-×÷':
+                if current_num:
+                    tokens.append(int(current_num))
+                    current_num = ""
+                tokens.append(char)
+            else:
+                # Invalid character
+                self._log(f"[OCR] Parse failed (invalid char '{char}'): '{original_expr}'")
+                return None
+        
+        # Don't forget the last number
+        if current_num:
+            tokens.append(int(current_num))
+        
+        # Validate token structure: should be [num] or [num, op, num] or [num, op, num, op, num] ...
+        if len(tokens) == 0:
+            self._log(f"[OCR] Parse failed (no tokens): '{original_expr}'")
+            return None
+        
+        # Check pattern: odd positions should be numbers, even positions should be operators
+        for i, token in enumerate(tokens):
+            if i % 2 == 0:  # Should be number
+                if not isinstance(token, int):
+                    self._log(f"[OCR] Parse failed (expected number at pos {i}): '{original_expr}'")
+                    return None
+            else:  # Should be operator
+                if token not in ['+', '-', '×', '÷']:
+                    self._log(f"[OCR] Parse failed (expected operator at pos {i}): '{original_expr}'")
+                    return None
+        
+        # Must end with a number (odd length)
+        if len(tokens) % 2 == 0:
+            self._log(f"[OCR] Parse failed (incomplete expression): '{original_expr}'")
+            return None
+        
+        return tokens
+    
+    @staticmethod
+    def _calculate(num1: int, op: str, num2: int) -> int:
+        """
+        Calculate the result of a simple expression.
+        
+        Args:
+            num1: First operand
+            op: Operator (×, ÷, +, -)
+            num2: Second operand
+            
+        Returns:
+            Result as integer, or None if invalid
+        """
+        try:
+            if op == '+':
+                return num1 + num2
+            elif op == '-':
+                return num1 - num2
+            elif op == '×':
+                return num1 * num2
+            elif op == '÷':
+                if num2 == 0:
+                    return None
+                return num1 // num2  # Integer division
+            else:
+                return None
+        except Exception:
+            return None
+    
+    def _evaluate_tokens(self, tokens: list) -> int:
+        """
+        Evaluate a list of tokens respecting operator precedence.
+        
+        Precedence: ×, ÷ before +, -
+        
+        Args:
+            tokens: List like [num, op, num, op, num, ...]
+            
+        Returns:
+            Calculated result as integer
+        """
+        if len(tokens) == 1:
+            return tokens[0]
+        
+        # First pass: handle × and ÷ (higher precedence)
+        i = 0
+        while i < len(tokens):
+            if i < len(tokens) and tokens[i] in ['×', '÷']:
+                op = tokens[i]
+                num1 = tokens[i - 1]
+                num2 = tokens[i + 1]
+                result = self._calculate(num1, op, num2)
+                # Replace num1, op, num2 with result
+                tokens = tokens[:i-1] + [result] + tokens[i+2:]
+                # Don't increment i, check same position again
+            else:
+                i += 1
+        
+        # Second pass: handle + and - (lower precedence)
+        i = 0
+        while i < len(tokens):
+            if i < len(tokens) and tokens[i] in ['+', '-']:
+                op = tokens[i]
+                num1 = tokens[i - 1]
+                num2 = tokens[i + 1]
+                result = self._calculate(num1, op, num2)
+                tokens = tokens[:i-1] + [result] + tokens[i+2:]
+            else:
+                i += 1
+        
+        return tokens[0] if tokens else None
+    
+    def evaluate_expression(self, expr: str) -> str:
+        """
+        Parse and evaluate a mathematical expression.
+        
+        Supports:
+        - Single number: "5" -> "5"
+        - Simple expression: "3×5" -> "15"
+        - Complex expression: "3+5×2" -> "13" (with precedence)
+        
+        Args:
+            expr: Expression string (e.g., "3×5=", "7+2", "3+5×2")
+            
+        Returns:
+            Calculated result as string, or None if failed
+        """
+        cleaned = self._clean_expression(expr)
+        tokens = self._parse_expression(cleaned)
+        
+        if tokens is None:
+            self._log(f"[OCR] Failed to parse expression: '{expr}' -> '{cleaned}'")
+            return None
+        
+        # Build expression string for logging
+        expr_str = ''.join(str(t) for t in tokens)
+        
+        # Evaluate
+        result = self._evaluate_tokens(tokens.copy())
+        
+        if result is None:
+            self._log(f"[OCR] Failed to calculate: '{expr_str}'")
+            return None
+        
+        self._log(f"[OCR] Expression: {expr_str} = {result}")
+        return str(result)
+    
+    def _clean_result(self, text: str) -> str:
+        """
+        Clean OCR result based on content type (text vs expression).
+        
+        Args:
+            text: Raw OCR text
+            
+        Returns:
+            Cleaned text appropriate for its type
+        """
+        if self._is_expression(text):
+            return self.evaluate_expression(text)
+        else:
+            return self._clean_text(text)
     
     def get_buffer_size(self) -> int:
         """Return current buffer size."""
