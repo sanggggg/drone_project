@@ -30,6 +30,7 @@ setup(
         	'test_anafi = anafi_ros_nodes.test_anafi:main',
         	'sphinx = anafi_ros_nodes.sphinx:main',
         	'example = anafi_ros_nodes.example:main',
+        	'yolo_detection = anafi_ros_nodes.yolo_detection_node:main',
         ],
     },
 )
