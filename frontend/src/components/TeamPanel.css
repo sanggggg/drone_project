@@ -1,0 +1,563 @@
+.team-panel {
+  --accent-color: #00ff88;
+  background: linear-gradient(
+    145deg,
+    rgba(20, 25, 35, 0.95) 0%,
+    rgba(15, 18, 28, 0.98) 100%
+  );
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 16px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  height: 100%;
+  box-shadow: 
+    0 4px 24px rgba(0, 0, 0, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  position: relative;
+  overflow: hidden;
+}
+
+.team-panel::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: var(--accent-color);
+  opacity: 0.8;
+}
+
+/* Header */
+.team-panel__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-bottom: 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.team-panel__name {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 1.4rem;
+  font-weight: 700;
+  color: var(--accent-color);
+  margin: 0;
+  text-shadow: 0 0 20px color-mix(in srgb, var(--accent-color) 40%, transparent);
+  letter-spacing: -0.02em;
+}
+
+.team-panel__connection {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.team-panel__status-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  transition: all 0.3s ease;
+}
+
+.team-panel__status-dot.connected {
+  background: #00ff88;
+  box-shadow: 0 0 12px rgba(0, 255, 136, 0.6);
+}
+
+.team-panel__status-dot.disconnected {
+  background: #ff4466;
+  box-shadow: 0 0 12px rgba(255, 68, 102, 0.6);
+}
+
+.team-panel__status-text {
+  font-size: 0.75rem;
+  color: rgba(255, 255, 255, 0.6);
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.team-panel__connect-btn {
+  padding: 6px 12px;
+  font-size: 0.7rem;
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(255, 255, 255, 0.8);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.team-panel__connect-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.25);
+}
+
+/* Stats Row */
+.team-panel__stats-row {
+  display: grid;
+  grid-template-columns: 1fr 0.8fr 1.2fr;
+  gap: 10px;
+}
+
+/* State Card */
+.team-panel__state-card {
+  justify-content: center;
+  text-align: center;
+  border-width: 2px;
+  transition: all 0.3s ease;
+}
+
+.team-panel__state-value {
+  font-size: 0.85rem !important;
+  letter-spacing: 0.05em;
+}
+
+.team-panel__state-card--uninit {
+  border-color: rgba(100, 100, 120, 0.4);
+  background: rgba(100, 100, 120, 0.1);
+}
+.team-panel__state-card--uninit .team-panel__state-value {
+  color: #8888aa;
+}
+
+.team-panel__state-card--idle {
+  border-color: rgba(100, 181, 246, 0.4);
+  background: rgba(100, 181, 246, 0.1);
+}
+.team-panel__state-card--idle .team-panel__state-value {
+  color: #64b5f6;
+}
+
+.team-panel__state-card--detecting {
+  border-color: rgba(0, 255, 136, 0.5);
+  background: rgba(0, 255, 136, 0.1);
+  animation: state-pulse-detecting 1.5s ease-in-out infinite;
+}
+.team-panel__state-card--detecting .team-panel__state-value {
+  color: #00ff88;
+  text-shadow: 0 0 10px rgba(0, 255, 136, 0.5);
+}
+
+.team-panel__state-card--drawing {
+  border-color: rgba(170, 102, 255, 0.5);
+  background: rgba(170, 102, 255, 0.15);
+  animation: state-pulse-drawing 1s ease-in-out infinite;
+}
+.team-panel__state-card--drawing .team-panel__state-value {
+  color: #aa66ff;
+  text-shadow: 0 0 10px rgba(170, 102, 255, 0.5);
+}
+
+.team-panel__state-card--finish {
+  border-color: rgba(255, 193, 7, 0.5);
+  background: rgba(255, 193, 7, 0.1);
+}
+.team-panel__state-card--finish .team-panel__state-value {
+  color: #ffc107;
+}
+
+.team-panel__state-card--unknown {
+  border-color: rgba(255, 68, 102, 0.3);
+  background: rgba(255, 68, 102, 0.05);
+}
+.team-panel__state-card--unknown .team-panel__state-value {
+  color: #ff4466;
+}
+
+@keyframes state-pulse-detecting {
+  0%, 100% { box-shadow: 0 0 0 rgba(0, 255, 136, 0); }
+  50% { box-shadow: 0 0 15px rgba(0, 255, 136, 0.3); }
+}
+
+@keyframes state-pulse-drawing {
+  0%, 100% { box-shadow: 0 0 0 rgba(170, 102, 255, 0); }
+  50% { box-shadow: 0 0 15px rgba(170, 102, 255, 0.4); }
+}
+
+.team-panel__stat-card {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 10px;
+  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.team-panel__stat-icon {
+  font-size: 1.2rem;
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 8px;
+}
+
+.team-panel__stat-content {
+  display: flex;
+  flex-direction: column;
+}
+
+.team-panel__stat-value {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 1.4rem;
+  font-weight: 700;
+  color: #fff;
+  line-height: 1;
+}
+
+.team-panel__stat-value.low-time {
+  color: #ff4466;
+  animation: pulse-warning 1s ease-in-out infinite;
+}
+
+.team-panel__stat-value.paused {
+  opacity: 0.5;
+}
+
+.team-panel__stat-label {
+  font-size: 0.7rem;
+  color: rgba(255, 255, 255, 0.5);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  margin-top: 4px;
+}
+
+/* Timer */
+.team-panel__timer {
+  position: relative;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.team-panel__timer > .team-panel__stat-icon {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  width: 28px;
+  height: 28px;
+  font-size: 0.9rem;
+}
+
+.team-panel__timer-bar {
+  width: 100%;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 2px;
+  overflow: hidden;
+  margin-top: 8px;
+}
+
+.team-panel__timer-progress {
+  height: 100%;
+  background: var(--accent-color);
+  border-radius: 2px;
+  transition: width 1s linear;
+}
+
+.team-panel__timer-progress.low-time {
+  background: #ff4466;
+}
+
+/* Camera Feed */
+.team-panel__camera {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.team-panel__camera-container {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.team-panel__camera-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.team-panel__camera-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.team-panel__camera-corner {
+  position: absolute;
+  width: 20px;
+  height: 20px;
+  border-color: var(--accent-color);
+  border-style: solid;
+  border-width: 0;
+  opacity: 0.6;
+}
+
+.team-panel__camera-corner--tl {
+  top: 12px;
+  left: 12px;
+  border-top-width: 2px;
+  border-left-width: 2px;
+}
+
+.team-panel__camera-corner--tr {
+  top: 12px;
+  right: 12px;
+  border-top-width: 2px;
+  border-right-width: 2px;
+}
+
+.team-panel__camera-corner--bl {
+  bottom: 12px;
+  left: 12px;
+  border-bottom-width: 2px;
+  border-left-width: 2px;
+}
+
+.team-panel__camera-corner--br {
+  bottom: 12px;
+  right: 12px;
+  border-bottom-width: 2px;
+  border-right-width: 2px;
+}
+
+.team-panel__camera-status {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  display: flex;
+  align-items: center;
+}
+
+.team-panel__camera-live {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.65rem;
+  font-weight: 600;
+  color: #ff4444;
+  background: rgba(0, 0, 0, 0.6);
+  padding: 4px 8px;
+  border-radius: 4px;
+  animation: blink-live 1.5s ease-in-out infinite;
+}
+
+.team-panel__camera-no-signal {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+}
+
+.team-panel__camera-static {
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    0deg,
+    rgba(255, 255, 255, 0.02) 0px,
+    rgba(255, 255, 255, 0.02) 1px,
+    transparent 1px,
+    transparent 2px
+  );
+  animation: static-noise 0.1s steps(5) infinite;
+}
+
+.team-panel__camera-no-signal-icon {
+  font-size: 2.5rem;
+  opacity: 0.3;
+  z-index: 1;
+}
+
+.team-panel__camera-no-signal-text {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.4);
+  letter-spacing: 0.1em;
+  z-index: 1;
+}
+
+.team-panel__camera-timestamp {
+  font-size: 0.65rem;
+  color: rgba(255, 255, 255, 0.35);
+  text-align: right;
+}
+
+/* Quiz Section */
+.team-panel__quiz-section {
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 10px;
+  padding: 12px;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 70px;
+}
+
+.team-panel__section-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.team-panel__section-icon {
+  font-size: 1rem;
+}
+
+.team-panel__section-title {
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: rgba(255, 255, 255, 0.6);
+  flex: 1;
+}
+
+.team-panel__state-indicator {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.65rem;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.6);
+  letter-spacing: 0.05em;
+}
+
+.team-panel__state-indicator.detecting {
+  background: rgba(0, 255, 136, 0.15);
+  color: #00ff88;
+}
+
+.team-panel__state-indicator.drawing {
+  background: rgba(170, 102, 255, 0.15);
+  color: #aa66ff;
+}
+
+.team-panel__state-indicator.idle {
+  background: rgba(100, 181, 246, 0.15);
+  color: #64b5f6;
+}
+
+/* Quiz Content */
+.team-panel__quiz-content {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.team-panel__quiz-equation {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.team-panel__quiz-question {
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.9);
+  max-width: 200px;
+  text-align: center;
+  word-break: break-word;
+}
+
+.team-panel__quiz-equals {
+  font-size: 2rem;
+  font-weight: 700;
+  color: var(--accent-color);
+  text-shadow: 0 0 12px color-mix(in srgb, var(--accent-color) 50%, transparent);
+}
+
+.team-panel__quiz-answer {
+  font-size: 2.5rem;
+  font-weight: 800;
+  color: rgba(255, 255, 255, 0.4);
+  min-width: 60px;
+  text-align: center;
+  transition: all 0.3s ease;
+}
+
+.team-panel__quiz-answer.has-answer {
+  color: var(--accent-color);
+  text-shadow: 0 0 20px color-mix(in srgb, var(--accent-color) 50%, transparent);
+  animation: answer-pop 0.3s ease-out;
+}
+
+/* Waiting State */
+.team-panel__quiz-waiting {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.team-panel__quiz-waiting-icon {
+  font-size: 2.5rem;
+  color: rgba(255, 255, 255, 0.3);
+  animation: pulse-soft 2s ease-in-out infinite;
+}
+
+.team-panel__quiz-waiting-text {
+  font-size: 0.85rem;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+/* Idle State */
+.team-panel__quiz-idle {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.team-panel__quiz-idle-text {
+  font-size: 0.85rem;
+  color: rgba(255, 255, 255, 0.4);
+}
+
+/* Animations */
+@keyframes pulse-warning {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+@keyframes pulse-soft {
+  0%, 100% { opacity: 0.3; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(1.05); }
+}
+
+@keyframes blink-live {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+@keyframes static-noise {
+  0% { transform: translateY(0); }
+  100% { transform: translateY(-10px); }
+}
+
+@keyframes answer-pop {
+  0% { transform: scale(0.8); opacity: 0; }
+  50% { transform: scale(1.1); }
+  100% { transform: scale(1); opacity: 1; }
+}

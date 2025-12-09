@@ -3,55 +3,41 @@ import { DataCard } from './DataCard';
 import './QuizAnswerDisplay.css';
 
 interface QuizAnswerDisplayProps {
+  question: string | null;
   answer: string | null;
   currentState: string | null;
   lastUpdate: Date | null;
 }
 
-const answerConfig: Record<string, { trajectory: string; icon: string; color: string }> = {
-  '1': { trajectory: 'Figure 8', icon: '∞', color: '#00ff88' },
-  '2': { trajectory: 'Vertical A', icon: 'A', color: '#aa66ff' },
-};
-
-export const QuizAnswerDisplay: React.FC<QuizAnswerDisplayProps> = ({ answer, currentState, lastUpdate }) => {
-  const config = answer ? answerConfig[answer] : null;
-  const isDetecting = currentState === 'DETECTING';
+export const QuizAnswerDisplay: React.FC<QuizAnswerDisplayProps> = ({ question, answer, lastUpdate }) => {
+  const hasData = question || answer;
 
   return (
     <DataCard
-      title="Quiz Answer"
+      title="Quiz Q&A"
       icon="💡"
-      topic="/quiz/answer"
-      lastUpdate={isDetecting ? lastUpdate : null}
+      topic="/quiz/question + /quiz/answer"
+      lastUpdate={lastUpdate}
       variant="success"
     >
       <div className="quiz-answer">
-        {isDetecting ? (
-          answer ? (
-            <>
-              <div
-                className="quiz-answer__badge"
-                style={{ '--answer-color': config?.color || '#64b5f6' } as React.CSSProperties}
-              >
-                <span className="quiz-answer__number">{answer}</span>
-              </div>
-              <div className="quiz-answer__details">
-                <span className="quiz-answer__trajectory-label">Trajectory:</span>
-                <span className="quiz-answer__trajectory">
-                  <span className="quiz-answer__icon">{config?.icon}</span>
-                  {config?.trajectory || 'Unknown'}
-                </span>
-              </div>
-            </>
-          ) : (
-            <div className="quiz-answer__empty">
-              <span className="quiz-answer__waiting-icon">?</span>
-              <span className="quiz-answer__waiting-text">Awaiting Detection</span>
+        {hasData ? (
+          <div className="quiz-answer__content">
+            {/* Question Display */}
+            <div className="quiz-answer__row">
+              <span className="quiz-answer__label">Q:</span>
+              <span className="quiz-answer__question">{question || '---'}</span>
             </div>
-          )
+            {/* Answer Display */}
+            <div className="quiz-answer__row">
+              <span className="quiz-answer__label">A:</span>
+              <span className="quiz-answer__answer">{answer || '---'}</span>
+            </div>
+          </div>
         ) : (
           <div className="quiz-answer__empty">
-            <span className="quiz-answer__waiting-text">Not Detecting</span>
+            <span className="quiz-answer__waiting-icon">?</span>
+            <span className="quiz-answer__waiting-text">No Detection Yet</span>
           </div>
         )}
       </div>

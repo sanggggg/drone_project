@@ -1,5 +1,6 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { useROS, useTopic } from './hooks/useROS';
+import { useBeepSound } from './hooks/useBeepSound';
 import {
   ConnectionStatus,
   QuizStateDisplay,
@@ -20,8 +21,6 @@ function App() {
   // Track correct answers (increments when transitioning from DRAWING to IDLE)
   const [correctCount, setCorrectCount] = useState(0);
   const [prevState, setPrevState] = useState<string | null>(null);
-  const [detectingStartTime, setDetectingStartTime] = useState<Date | null>(null);
-  const [displayedAnswer, setDisplayedAnswer] = useState<string | null>(null);
 
   // Quiz State topic
   const { message: quizState, lastUpdate: quizStateUpdate } = useTopic<StringMsg>({
@@ -31,7 +30,7 @@ function App() {
     enabled: isConnected,
   });
 
-  // Track state changes to count correct answers and manage answer display
+  // Track state changes to count correct answers
   const currentState = quizState?.data || null;
   useEffect(() => {
     if (currentState !== prevState) {
@@ -43,19 +42,17 @@ function App() {
       if (currentState === 'UNINIT') {
         setCorrectCount(0);
       }
-      
-      // Track when DETECTING state starts
-      if (currentState === 'DETECTING') {
-        setDetectingStartTime(new Date());
-        setDisplayedAnswer(null); // Clear previous answer when entering DETECTING
-      } else {
-        setDetectingStartTime(null);
-        // Keep displayedAnswer visible even after leaving DETECTING state
-      }
-      
       setPrevState(currentState);
     }
   }, [currentState, prevState]);
+
+  // Quiz Question topic
+  const { message: quizQuestion, lastUpdate: quizQuestionUpdate } = useTopic<StringMsg>({
+    ros,
+    topicName: '/quiz/question',
+    messageType: 'std_msgs/String',
+    enabled: isConnected,
+  });
 
   // Quiz Answer topic
   const { message: quizAnswer, lastUpdate: quizAnswerUpdate } = useTopic<StringMsg>({
@@ -64,19 +61,6 @@ function App() {
     messageType: 'std_msgs/String',
     enabled: isConnected,
   });
-
-  // Show answers that come after entering DETECTING state
-  useEffect(() => {
-    if (currentState === 'DETECTING') {
-      if (quizAnswer?.data && detectingStartTime && quizAnswerUpdate) {
-        // Only show answer if it arrived after we entered DETECTING state
-        if (quizAnswerUpdate >= detectingStartTime) {
-          setDisplayedAnswer(quizAnswer.data);
-        }
-      }
-    }
-    // Don't clear answer when leaving DETECTING state - keep it displayed
-  }, [quizAnswer, quizAnswerUpdate, currentState, detectingStartTime]);
 
   // Crazyflie Odometry topic
   const { message: cfOdom, lastUpdate: cfOdomUpdate } = useTopic<Odometry>({
@@ -102,147 +86,26 @@ function App() {
     enabled: isConnected,
   });
 
-  // Audio context for beep sounds
-  const audioContextRef = useRef<AudioContext | null>(null);
+  // Sound test state
+  const [testBeepType, setTestBeepType] = useState<string | null>(null);
+  const [testLastUpdate, setTestLastUpdate] = useState<Date | null>(null);
 
-  // Initialize audio context on mount
-  useEffect(() => {
-    if (typeof window !== 'undefined' && !audioContextRef.current) {
-      audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
-    }
-    return () => {
-      if (audioContextRef.current) {
-        audioContextRef.current.close();
-        audioContextRef.current = null;
-      }
-    };
-  }, []);
+  // Use beep sound hook - combines ROS topic with manual test
+  useBeepSound({
+    beepType: testBeepType || quizBeep?.data || null,
+    lastUpdate: testLastUpdate || quizBeepUpdate,
+    enabled: true,
+  });
 
-  // Play beep sound based on message type
-  useEffect(() => {
-    if (!quizBeep?.data || !audioContextRef.current) {
-      return;
-    }
-
-    const beepType = quizBeep.data.toLowerCase();
-    const ctx = audioContextRef.current;
-
-    // Resume audio context if suspended (required for user interaction)
-    if (ctx.state === 'suspended') {
-      ctx.resume();
-    }
-
-    const playBeep = (frequency: number, duration: number, type: 'tone' | 'sweep' = 'tone') => {
-      const oscillator = ctx.createOscillator();
-      const gainNode = ctx.createGain();
-
-      oscillator.connect(gainNode);
-      gainNode.connect(ctx.destination);
-
-      oscillator.frequency.value = frequency;
-      oscillator.type = 'sine';
-
-      if (type === 'sweep') {
-        // Sweep from low to high frequency
-        oscillator.frequency.setValueAtTime(frequency * 0.7, ctx.currentTime);
-        oscillator.frequency.exponentialRampToValueAtTime(frequency * 1.3, ctx.currentTime + duration);
-      }
-
-      gainNode.gain.setValueAtTime(0, ctx.currentTime);
-      gainNode.gain.linearRampToValueAtTime(0.3, ctx.currentTime + 0.01);
-      gainNode.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + duration);
-
-      oscillator.start(ctx.currentTime);
-      oscillator.stop(ctx.currentTime + duration);
-    };
-
-    switch (beepType) {
-      case 'start':
-        // High-pitched short beep
-        playBeep(800, 0.15);
-        break;
-      case 'end':
-        // Medium-pitched short beep
-        playBeep(600, 0.15);
-        break;
-      case 'correct':
-        // Rising tone (success sound)
-        playBeep(500, 0.3, 'sweep');
-        break;
-      default:
-        // Default beep
-        playBeep(400, 0.1);
-    }
-  }, [quizBeep, quizBeepUpdate]);
-
-  // Test beep sounds - plays each type every 1 second (for testing)
-  // Set TEST_BEEP_ENABLED to true to enable
-  const TEST_BEEP_ENABLED = false; // Change to true to test beep sounds
-  useEffect(() => {
-    if (!TEST_BEEP_ENABLED || !audioContextRef.current) {
-      return;
-    }
-
-    const beepTypes: Array<'start' | 'end' | 'correct'> = ['start', 'end', 'correct'];
-    let currentIndex = 0;
-
-    const ctx = audioContextRef.current;
-
-    // Resume audio context if suspended
-    if (ctx.state === 'suspended') {
-      ctx.resume();
-    }
-
-    const playBeep = (frequency: number, duration: number, type: 'tone' | 'sweep' = 'tone') => {
-      const oscillator = ctx.createOscillator();
-      const gainNode = ctx.createGain();
-
-      oscillator.connect(gainNode);
-      gainNode.connect(ctx.destination);
-
-      oscillator.frequency.value = frequency;
-      oscillator.type = 'sine';
-
-      if (type === 'sweep') {
-        oscillator.frequency.setValueAtTime(frequency * 0.7, ctx.currentTime);
-        oscillator.frequency.exponentialRampToValueAtTime(frequency * 1.3, ctx.currentTime + duration);
-      }
-
-      gainNode.gain.setValueAtTime(0, ctx.currentTime);
-      gainNode.gain.linearRampToValueAtTime(0.3, ctx.currentTime + 0.01);
-      gainNode.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + duration);
-
-      oscillator.start(ctx.currentTime);
-      oscillator.stop(ctx.currentTime + duration);
-    };
-
-    const playTestBeep = () => {
-      const beepType = beepTypes[currentIndex];
-      console.log(`[TEST] Playing beep: ${beepType}`);
-
-      switch (beepType) {
-        case 'start':
-          playBeep(800, 0.15);
-          break;
-        case 'end':
-          playBeep(600, 0.15);
-          break;
-        case 'correct':
-          playBeep(500, 0.3, 'sweep');
-          break;
-      }
-
-      currentIndex = (currentIndex + 1) % beepTypes.length;
-    };
-
-    // Play immediately, then every 1 second
-    playTestBeep();
-    const interval = setInterval(playTestBeep, 1000);
-
-    return () => {
-      clearInterval(interval);
-    };
-  }, [TEST_BEEP_ENABLED]);
+  const playTestSound = (type: string) => {
+    setTestBeepType(type);
+    setTestLastUpdate(new Date());
+    // Reset test state after a short delay
+    setTimeout(() => {
+      setTestBeepType(null);
+      setTestLastUpdate(null);
+    }, 1000);
+  };
 
   return (
     <div className="app">
@@ -277,9 +140,10 @@ function App() {
               lastUpdate={quizStateUpdate}
             />
             <QuizAnswerDisplay
-              answer={currentState === 'DRAWING' ? displayedAnswer : null}
+              question={quizQuestion?.data || null}
+              answer={quizAnswer?.data || null}
               currentState={currentState}
-              lastUpdate={quizAnswerUpdate}
+              lastUpdate={quizAnswerUpdate || quizQuestionUpdate}
             />
             <QuizStatsDisplay
               currentState={currentState}
@@ -305,6 +169,48 @@ function App() {
           </div>
         </div>
       </main>
+
+      {/* Sound Test Panel */}
+      <div style={{
+        position: 'fixed',
+        bottom: '80px',
+        right: '20px',
+        background: 'rgba(0,0,0,0.95)',
+        border: '2px solid #00ff88',
+        borderRadius: '12px',
+        padding: '16px',
+        zIndex: 9999,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '8px',
+        boxShadow: '0 0 20px rgba(0,255,136,0.3)',
+      }}>
+        <span style={{ color: '#00ff88', fontWeight: 'bold', fontSize: '14px', marginBottom: '4px' }}>🔊 Sound Test</span>
+        <button 
+          onClick={() => playTestSound('start')}
+          style={{ padding: '8px 16px', background: '#2563eb', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '12px' }}
+        >
+          ▶ START
+        </button>
+        <button 
+          onClick={() => playTestSound('end')}
+          style={{ padding: '8px 16px', background: '#dc2626', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '12px' }}
+        >
+          ■ END
+        </button>
+        <button 
+          onClick={() => playTestSound('correct')}
+          style={{ padding: '8px 16px', background: '#16a34a', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '12px' }}
+        >
+          ✓ CORRECT
+        </button>
+        <button 
+          onClick={() => playTestSound('default')}
+          style={{ padding: '8px 16px', background: '#6b7280', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '12px' }}
+        >
+          ● DEFAULT
+        </button>
+      </div>
 
       <footer className="app__footer">
         <span>Drone Project © 2025</span>

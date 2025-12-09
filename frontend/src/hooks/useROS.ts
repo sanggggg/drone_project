@@ -346,3 +346,132 @@ export function useImageTopic(ros: ROSLIB.Ros | null, topicName: string, enabled
 
   return { imageData, lastUpdate };
 }
+
+// Hook for throttled Image topics (sensor_msgs/Image) - saves bandwidth
+// Uses ROSLIB.Topic's built-in throttle_rate for rate limiting
+export function useThrottledImageTopic(
+  ros: ROSLIB.Ros | null,
+  topicName: string,
+  enabled = true,
+  throttleMs = 1000  // Default: 1 update per second
+) {
+  const [imageData, setImageData] = useState<string | null>(null);
+  const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
+  const topicRef = useRef<ROSLIB.Topic<ImageMessage> | null>(null);
+
+  useEffect(() => {
+    if (!ros || !enabled) {
+      return;
+    }
+
+    const topic = new ROSLIB.Topic<ImageMessage>({
+      ros,
+      name: topicName,
+      messageType: 'sensor_msgs/Image',
+      throttle_rate: throttleMs,  // ROSLIB handles throttling
+    });
+
+    topicRef.current = topic;
+
+    const callback = (msg: ImageMessage) => {
+      try {
+        // ROSLIB sends data as base64 string, convert to Uint8Array
+        let imageBytes: Uint8Array;
+        
+        if (typeof msg.data === 'string') {
+          const binaryString = atob(msg.data);
+          imageBytes = new Uint8Array(binaryString.length);
+          for (let i = 0; i < binaryString.length; i++) {
+            imageBytes[i] = binaryString.charCodeAt(i);
+          }
+        } else {
+          imageBytes = new Uint8Array(msg.data);
+        }
+        
+        if (msg.width <= 0 || msg.height <= 0) {
+          return;
+        }
+        
+        const canvas = document.createElement('canvas');
+        canvas.width = msg.width;
+        canvas.height = msg.height;
+        const ctx = canvas.getContext('2d');
+        
+        if (!ctx) {
+          return;
+        }
+        
+        const imageDataObj = ctx.createImageData(msg.width, msg.height);
+        const pixels = imageDataObj.data;
+        
+        if (msg.encoding === 'bgr8') {
+          const bytesPerPixel = 3;
+          for (let row = 0; row < msg.height; row++) {
+            const rowOffset = row * msg.step;
+            const pixelOffset = row * msg.width * 4;
+            for (let col = 0; col < msg.width; col++) {
+              const srcIdx = rowOffset + col * bytesPerPixel;
+              const dstIdx = pixelOffset + col * 4;
+              if (srcIdx + 2 < imageBytes.length) {
+                pixels[dstIdx] = imageBytes[srcIdx + 2];     // R
+                pixels[dstIdx + 1] = imageBytes[srcIdx + 1]; // G
+                pixels[dstIdx + 2] = imageBytes[srcIdx];     // B
+                pixels[dstIdx + 3] = 255;                     // A
+              }
+            }
+          }
+        } else if (msg.encoding === 'rgb8') {
+          const bytesPerPixel = 3;
+          for (let row = 0; row < msg.height; row++) {
+            const rowOffset = row * msg.step;
+            const pixelOffset = row * msg.width * 4;
+            for (let col = 0; col < msg.width; col++) {
+              const srcIdx = rowOffset + col * bytesPerPixel;
+              const dstIdx = pixelOffset + col * 4;
+              if (srcIdx + 2 < imageBytes.length) {
+                pixels[dstIdx] = imageBytes[srcIdx];
+                pixels[dstIdx + 1] = imageBytes[srcIdx + 1];
+                pixels[dstIdx + 2] = imageBytes[srcIdx + 2];
+                pixels[dstIdx + 3] = 255;
+              }
+            }
+          }
+        } else if (msg.encoding === 'mono8') {
+          for (let row = 0; row < msg.height; row++) {
+            const rowOffset = row * msg.step;
+            const pixelOffset = row * msg.width * 4;
+            for (let col = 0; col < msg.width; col++) {
+              const srcIdx = rowOffset + col;
+              const dstIdx = pixelOffset + col * 4;
+              if (srcIdx < imageBytes.length) {
+                const val = imageBytes[srcIdx];
+                pixels[dstIdx] = val;
+                pixels[dstIdx + 1] = val;
+                pixels[dstIdx + 2] = val;
+                pixels[dstIdx + 3] = 255;
+              }
+            }
+          }
+        } else {
+          return; // Unsupported encoding
+        }
+        
+        ctx.putImageData(imageDataObj, 0, 0);
+        const dataUrl = canvas.toDataURL('image/png');
+        setImageData(dataUrl);
+        setLastUpdate(new Date());
+      } catch (error) {
+        console.error('Error processing throttled image:', error);
+      }
+    };
+
+    topic.subscribe(callback);
+
+    return () => {
+      topic.unsubscribe();
+      topicRef.current = null;
+    };
+  }, [ros, topicName, enabled, throttleMs]);
+
+  return { imageData, lastUpdate };
+}
