@@ -94,7 +94,7 @@ def generate_launch_description():
     # ==========================================================================
     uri_arg = DeclareLaunchArgument(
         'uri',
-        default_value='radio://0/80/2M/E7E7E7E709',
+        default_value='radio://0/80/2M/E7E7E7E711',
         description='Crazyflie radio URI'
     )
 
@@ -178,7 +178,7 @@ def generate_launch_description():
 
     vertical_mode_arg = DeclareLaunchArgument(
         'vertical_mode',
-        default_value='False',
+        default_value='true',
         description='Vertical mode (True: vertical, False: horizontal)'
     )
 
