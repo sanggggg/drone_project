@@ -316,7 +316,9 @@ class AnafiTracker:
         if self._phase == TrackingPhase.CENTERING:
             self._execute_centering(status)
         elif self._phase == TrackingPhase.DISTANCE_ADJUST:
-            self._execute_distance_adjust(status)
+            self._complete_tracking()
+            return
+            # self._execute_distance_adjust(status)
     
     # ==================== Tracking Logic ====================
     
