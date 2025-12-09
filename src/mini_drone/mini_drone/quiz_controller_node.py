@@ -685,11 +685,6 @@ class QuizControllerNode(Node):
         if self._anafi_tracker.is_tracking:
             self._anafi_tracker.stop_tracking()
         
-        # OCR 비활성화
-        ocr_msg = Bool()
-        ocr_msg.data = False
-        self.pub_ocr_enable.publish(ocr_msg)
-        
         self._land_both()
         delay = self.land_duration + self.settle_time
         self._schedule_transition(QuizState.FINISH, delay)

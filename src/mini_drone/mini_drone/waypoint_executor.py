@@ -26,6 +26,7 @@ class WaypointExecutor:
         self._stop_event = threading.Event()
         self._running = False
         self._lock = threading.Lock()
+        self.x_variance = 0.8;
         self.init_x = self._get_odom()[0]
         self.init_y = self._get_odom()[1]
         self.init_z = self._get_odom()[2] + 1.0
@@ -34,8 +35,8 @@ class WaypointExecutor:
         self._waypoints = {
             '0': [
                     (self.init_x, self.init_y, self.init_z, self.init_yaw, 0),  # 현재 위치 (x,z)
-                    (self.init_x + 0.5, self.init_y, self.init_z, self.init_yaw, 0),  # (1, 0)
-                    (self.init_x + 0.5 , self.init_y, self.init_z - 1.0, self.init_yaw, 0),  # (1, -2)
+                    (self.init_x + self.x_variance, self.init_y, self.init_z, self.init_yaw, 0),  # (1, 0)
+                    (self.init_x + self.x_variance , self.init_y, self.init_z - 1.0, self.init_yaw, 0),  # (1, -2)
                     (self.init_x, self.init_y, self.init_z - 1.0, self.init_yaw, 0),  # (0, -2)
                     (self.init_x, self.init_y, self.init_z, self.init_yaw, 1),  # 현재 위치 (x,z)
             ],
@@ -46,72 +47,72 @@ class WaypointExecutor:
             ],
             '2': [
                     (self.init_x, self.init_y, self.init_z, self.init_yaw, 0),  # 현재 위치 (x,z)
-                    (self.init_x + 0.5, self.init_y, self.init_z, self.init_yaw, 0),  # (1, 0)
-                    (self.init_x + 0.5, self.init_y, self.init_z-0.5, self.init_yaw, 0),  # (1, -1)
+                    (self.init_x + self.x_variance, self.init_y, self.init_z, self.init_yaw, 0),  # (1, 0)
+                    (self.init_x + self.x_variance, self.init_y, self.init_z-0.5, self.init_yaw, 0),  # (1, -1)
                     (self.init_x, self.init_y, self.init_z -0.5, self.init_yaw, 0),  # (0, -1)
                     (self.init_x, self.init_y, self.init_z -1.0, self.init_yaw, 0),  # (0, -2)
-                    (self.init_x + 0.5, self.init_y, self.init_z -1.0, self.init_yaw, 1),  # (1, -2)
+                    (self.init_x + self.x_variance, self.init_y, self.init_z -1.0, self.init_yaw, 1),  # (1, -2)
                     (self.init_x, self.init_y, self.init_z, self.init_yaw, 0),  # 현재 위치 (x,z)
             ],
             '3': [
                     (self.init_x, self.init_y, self.init_z, self.init_yaw, 0),  # 현재 위치 (x,z)
-                    (self.init_x + 0.5, self.init_y, self.init_z, self.init_yaw, 0),  # (1, 0)
-                    (self.init_x + 0.5, self.init_y, self.init_z-0.5, self.init_yaw, 0),  # (1, -1)
+                    (self.init_x + self.x_variance, self.init_y, self.init_z, self.init_yaw, 0),  # (1, 0)
+                    (self.init_x + self.x_variance, self.init_y, self.init_z-0.5, self.init_yaw, 0),  # (1, -1)
                     (self.init_x, self.init_y, self.init_z -0.5, self.init_yaw, 0),  # (0, -1)
-                    (self.init_x + 0.5, self.init_y, self.init_z-0.5, self.init_yaw, 0),  # (1, -1)
-                    (self.init_x + 0.5, self.init_y, self.init_z-1.0, self.init_yaw, 0),  # (1, -2)
+                    (self.init_x + self.x_variance, self.init_y, self.init_z-0.5, self.init_yaw, 0),  # (1, -1)
+                    (self.init_x + self.x_variance, self.init_y, self.init_z-1.0, self.init_yaw, 0),  # (1, -2)
                     (self.init_x, self.init_y, self.init_z -1.0, self.init_yaw, 1),  # (0, -2)
                     (self.init_x, self.init_y, self.init_z, self.init_yaw, 0),  # 현재 위치 (x,z)
             ],
             '4': [
                     (self.init_x, self.init_y, self.init_z, self.init_yaw, 0),  # 현재 위치 (x,z)
                     (self.init_x, self.init_y, self.init_z - 0.5, self.init_yaw, 0),  # (0, -1)
-                    (self.init_x + 0.5, self.init_y, self.init_z - 0.5, self.init_yaw, 0),  # (1, -1)
-                    (self.init_x + 0.5, self.init_y, self.init_z , self.init_yaw, 0),  # (1, 0)
-                    (self.init_x + 0.5, self.init_y, self.init_z - 1.0 , self.init_yaw, 1),  # (1, -2)
+                    (self.init_x + self.x_variance, self.init_y, self.init_z - 0.5, self.init_yaw, 0),  # (1, -1)
+                    (self.init_x + self.x_variance, self.init_y, self.init_z , self.init_yaw, 0),  # (1, 0)
+                    (self.init_x + self.x_variance, self.init_y, self.init_z - 1.0 , self.init_yaw, 1),  # (1, -2)
                     (self.init_x, self.init_y, self.init_z, self.init_yaw, 0),  # 현재 위치 (x,z)
             ],
             '5': [
                     (self.init_x, self.init_y, self.init_z, self.init_yaw, 0),  # 현재 위치 (x,z)
-                    (self.init_x - 0.5, self.init_y, self.init_z, self.init_yaw, 0),  # (-1, 0)
-                    (self.init_x - 0.5, self.init_y, self.init_z-0.5, self.init_yaw, 0),  # (-1, -1)
+                    (self.init_x - self.x_variance, self.init_y, self.init_z, self.init_yaw, 0),  # (-1, 0)
+                    (self.init_x - self.x_variance, self.init_y, self.init_z-0.5, self.init_yaw, 0),  # (-1, -1)
                     (self.init_x, self.init_y, self.init_z -0.5, self.init_yaw, 0),  # (0, -1)
                     (self.init_x, self.init_y, self.init_z -1.0, self.init_yaw, 0),  # (0, -2)
-                    (self.init_x - 0.5, self.init_y, self.init_z -1.0, self.init_yaw, 1),  # (-1, -2)
+                    (self.init_x - self.x_variance, self.init_y, self.init_z -1.0, self.init_yaw, 1),  # (-1, -2)
                     (self.init_x, self.init_y, self.init_z, self.init_yaw, 0),  # 현재 위치 (x,z)
                 ],
             '6': [
                     (self.init_x, self.init_y, self.init_z, self.init_yaw, 0),  # 현재 위치 (x,z)
-                    (self.init_x - 0.5, self.init_y, self.init_z, self.init_yaw, 0),  # (-1, 0)
-                    (self.init_x - 0.5, self.init_y, self.init_z-1.0, self.init_yaw, 0),  # (-1, -2)
+                    (self.init_x - self.x_variance, self.init_y, self.init_z, self.init_yaw, 0),  # (-1, 0)
+                    (self.init_x - self.x_variance, self.init_y, self.init_z-1.0, self.init_yaw, 0),  # (-1, -2)
                     (self.init_x, self.init_y, self.init_z -1.0, self.init_yaw, 0),  # (0, -2)
                     (self.init_x, self.init_y, self.init_z - 0.5, self.init_yaw, 0),  # (0, -1 )
-                    (self.init_x - 0.5, self.init_y, self.init_z -0.5, self.init_yaw, 1),  # (-1, -1)
+                    (self.init_x - self.x_variance, self.init_y, self.init_z -0.5, self.init_yaw, 1),  # (-1, -1)
                     (self.init_x, self.init_y, self.init_z, self.init_yaw, 0),  # 현재 위치 (x,z)
             ],
             '7': [
                     (self.init_x, self.init_y, self.init_z, self.init_yaw, 0),  # 현재 위치 (x,z)
                     (self.init_x, self.init_y, self.init_z - 0.5, self.init_yaw, 0),  # 현재 위치 (0, -1)
                     (self.init_x, self.init_y, self.init_z, self.init_yaw, 0),  # 현재 위치 (x,z)
-                    (self.init_x + 0.5, self.init_y, self.init_z, self.init_yaw, 0),  # (1, 0)
-                    (self.init_x + 0.5, self.init_y, self.init_z -1, self.init_yaw, 1),  # (1, -2)
+                    (self.init_x + self.x_variance, self.init_y, self.init_z, self.init_yaw, 0),  # (1, 0)
+                    (self.init_x + self.x_variance, self.init_y, self.init_z -1, self.init_yaw, 1),  # (1, -2)
                     (self.init_x, self.init_y, self.init_z, self.init_yaw, 0),  # 현재 위치 (x,z)
             ],
             '8': [
                     (self.init_x, self.init_y, self.init_z, self.init_yaw, 0),  # 현재 위치 (x,z)
-                    (self.init_x + 0.5, self.init_y, self.init_z, self.init_yaw, 0),  # (1, 0)
-                    (self.init_x + 0.5, self.init_y, self.init_z - 0.5, self.init_yaw, 0),  # (1, -1)
+                    (self.init_x + self.x_variance, self.init_y, self.init_z, self.init_yaw, 0),  # (1, 0)
+                    (self.init_x + self.x_variance, self.init_y, self.init_z - 0.5, self.init_yaw, 0),  # (1, -1)
                     (self.init_x, self.init_y, self.init_z - 0.5, self.init_yaw, 0),  # (0, -1)
                     (self.init_x, self.init_y, self.init_z - 1.0, self.init_yaw, 0),  # (0, -2)
-                    (self.init_x + 0.5, self.init_y, self.init_z - 1.0, self.init_yaw, 0),  # (1, -2)
-                    (self.init_x + 0.5, self.init_y, self.init_z - 0.5, self.init_yaw, 0),  # (1, -1)
+                    (self.init_x + self.x_variance, self.init_y, self.init_z - 1.0, self.init_yaw, 0),  # (1, -2)
+                    (self.init_x + self.x_variance, self.init_y, self.init_z - 0.5, self.init_yaw, 0),  # (1, -1)
                     (self.init_x, self.init_y, self.init_z - 0.5, self.init_yaw, 0),  # (0, -1)
                     (self.init_x, self.init_y, self.init_z, self.init_yaw, 1),  # 현재 위치 (x,z)
             ],
             '9': [
                     (self.init_x, self.init_y, self.init_z, self.init_yaw, 0),  # 현재 위치 (x,z)
-                    (self.init_x - 0.5, self.init_y, self.init_z, self.init_yaw, 0),  # (1, 0)
-                    (self.init_x - 0.5, self.init_y, self.init_z - 0.5, self.init_yaw, 0),  # (1, -1)
+                    (self.init_x - self.x_variance, self.init_y, self.init_z, self.init_yaw, 0),  # (1, 0)
+                    (self.init_x - self.x_variance, self.init_y, self.init_z - 0.5, self.init_yaw, 0),  # (1, -1)
                     (self.init_x, self.init_y, self.init_z - 0.5, self.init_yaw, 0),  # (0, -1)
                     (self.init_x, self.init_y, self.init_z, self.init_yaw, 0),  # 현재 위치 (x,z)
                     (self.init_x, self.init_y, self.init_z - 1.0, self.init_yaw, 1),  # (0, -2)
