@@ -284,6 +284,11 @@ class YoloDetectionNode(Node):
         self.pub_quiz_answer = self.create_publisher(
             String, 'quiz/answer', qos_detection
         )
+        
+        # Quiz question publisher (String) - the detected expression before calculation
+        self.pub_quiz_question = self.create_publisher(
+            String, 'quiz/question', qos_detection
+        )
 
         # ---------- Logging ----------
         self.get_logger().info("=" * 60)
@@ -299,6 +304,7 @@ class YoloDetectionNode(Node):
         self.get_logger().info(f"  Detections Topic: yolo/detections (JSON)")
         self.get_logger().info(f"  OCR Topic:        yolo/ocr_image")
         self.get_logger().info(f"  Quiz Answer Topic: quiz/answer")
+        self.get_logger().info(f"  Quiz Question Topic: quiz/question")
         self.get_logger().info(f"  OCR Enabled:      {self.ocr_enabled and self.ocr is not None}")
         if self.ocr_enabled and self.ocr:
             self.get_logger().info(f"  OCR Classes:      {self.ocr_classes if self.ocr_classes else 'all/full image'}")
@@ -643,17 +649,24 @@ class YoloDetectionNode(Node):
             self.get_logger().info("[OCR] No YOLO detection, skipping OCR")
             # Still check if buffer needs timeout processing
             if self.ocr_buffer:
-                processed, mode_result = self.ocr_buffer.check_timeout()
-                if processed and mode_result:
-                    self.get_logger().info(f"[OCR] ★★★ FINAL RESULT (timeout): '{mode_result}' ★★★")
-                    # Publish to /quiz/answer topic only if state is DETECTING
+                processed, question, answer = self.ocr_buffer.check_timeout()
+                if processed and answer:
+                    self.get_logger().info(f"[OCR] ★★★ FINAL RESULT (timeout): '{question}' = '{answer}' ★★★")
+                    # Publish to /quiz/question and /quiz/answer topics only if state is DETECTING
                     if self._quiz_state == "DETECTING":
+                        # Publish question
+                        if question:
+                            question_msg = String()
+                            question_msg.data = question
+                            self.pub_quiz_question.publish(question_msg)
+                            self.get_logger().info(f"[OCR] Published question to /quiz/question: '{question}'")
+                        # Publish answer
                         answer_msg = String()
-                        answer_msg.data = mode_result
+                        answer_msg.data = answer
                         self.pub_quiz_answer.publish(answer_msg)
-                        self.get_logger().info(f"[OCR] Published answer to /quiz/answer: '{mode_result}' (state: {self._quiz_state})")
+                        self.get_logger().info(f"[OCR] Published answer to /quiz/answer: '{answer}' (state: {self._quiz_state})")
                     else:
-                        self.get_logger().info(f"[OCR] Skipped publishing answer (current state: {self._quiz_state}, expected: DETECTING)")
+                        self.get_logger().info(f"[OCR] Skipped publishing (current state: {self._quiz_state}, expected: DETECTING)")
             return
         
         # Process detected regions
@@ -687,19 +700,26 @@ class YoloDetectionNode(Node):
                 
                 # Add to buffer instead of immediate OCR
                 if self.ocr_buffer:
-                    should_process, mode_result = self.ocr_buffer.add_image(cropped)
+                    should_process, question, answer = self.ocr_buffer.add_image(cropped)
                     
-                    if should_process and mode_result:
+                    if should_process and answer:
                         # Batch processing completed, log final result
-                        self.get_logger().info(f"[OCR] ★★★ FINAL RESULT: '{mode_result}' ★★★")
-                        # Publish to /quiz/answer topic only if state is DETECTING
+                        self.get_logger().info(f"[OCR] ★★★ FINAL RESULT: '{question}' = '{answer}' ★★★")
+                        # Publish to /quiz/question and /quiz/answer topics only if state is DETECTING
                         if self._quiz_state == "DETECTING":
+                            # Publish question
+                            if question:
+                                question_msg = String()
+                                question_msg.data = question
+                                self.pub_quiz_question.publish(question_msg)
+                                self.get_logger().info(f"[OCR] Published question to /quiz/question: '{question}'")
+                            # Publish answer
                             answer_msg = String()
-                            answer_msg.data = mode_result
+                            answer_msg.data = answer
                             self.pub_quiz_answer.publish(answer_msg)
-                            self.get_logger().info(f"[OCR] Published answer to /quiz/answer: '{mode_result}' (state: {self._quiz_state})")
+                            self.get_logger().info(f"[OCR] Published answer to /quiz/answer: '{answer}' (state: {self._quiz_state})")
                         else:
-                            self.get_logger().info(f"[OCR] Skipped publishing answer (current state: {self._quiz_state}, expected: DETECTING)")
+                            self.get_logger().info(f"[OCR] Skipped publishing (current state: {self._quiz_state}, expected: DETECTING)")
                     
                     # Publish cropped image for visualization
                     try:

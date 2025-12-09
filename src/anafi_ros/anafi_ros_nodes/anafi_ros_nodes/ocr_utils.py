@@ -420,17 +420,19 @@ class OCRBufferManager:
         Add an image to the buffer.
         
         Returns:
-            (should_process: bool, result: str or None)
-            - If should_process is True and result is not None, batch was processed
+            (should_process: bool, question: str or None, answer: str or None)
+            - If should_process is True and answer is not None, batch was processed
+            - question is the original expression (e.g., "3×5")
+            - answer is the calculated result (e.g., "15")
             - If should_process is False, image was added to buffer
         """
         if image is None or image.size == 0:
-            return False, None
+            return False, None, None
         
         # Skip if currently processing a batch
         if self._is_processing:
             self._log("[OCR Buffer] Skipping - batch processing in progress")
-            return False, None
+            return False, None, None
         
         with self._lock:
             # Check if buffer was empty (for timeout tracking)
@@ -457,16 +459,20 @@ class OCRBufferManager:
                     should_process = True
             
             if should_process:
-                result = self._process_batch_locked()
-                return True, result
+                question, answer = self._process_batch_locked()
+                return True, question, answer
             
-            return False, None
+            return False, None, None
     
-    def force_process(self) -> str:
-        """Force process the current buffer regardless of size/timeout."""
+    def force_process(self) -> tuple:
+        """Force process the current buffer regardless of size/timeout.
+        
+        Returns:
+            (question: str or None, answer: str or None)
+        """
         with self._lock:
             if len(self._buffer) == 0:
-                return None
+                return None, None
             return self._process_batch_locked()
     
     def check_timeout(self) -> tuple:
@@ -475,47 +481,63 @@ class OCRBufferManager:
         Call this periodically to handle timeout-based processing.
         
         Returns:
-            (processed: bool, result: str or None)
+            (processed: bool, question: str or None, answer: str or None)
         """
         with self._lock:
             if len(self._buffer) == 0:
-                return False, None
+                return False, None, None
             
             if self._first_add_time is not None:
                 elapsed = time.time() - self._first_add_time
                 if elapsed >= self.timeout_sec:
                     self._log(f"[OCR Buffer] Timeout check triggered ({elapsed:.2f}s)")
-                    result = self._process_batch_locked()
-                    return True, result
+                    question, answer = self._process_batch_locked()
+                    return True, question, answer
             
-            return False, None
+            return False, None, None
     
-    def _process_batch_locked(self) -> str:
+    def _process_batch_locked(self) -> tuple:
         """
         Process all images in buffer and return mode result.
         Must be called with lock held.
+        
+        Returns:
+            (question: str or None, answer: str or None)
+            - question is the original expression (e.g., "3×5")
+            - answer is the calculated result (e.g., "15")
         """
         self._is_processing = True
         if len(self._buffer) == 0:
-            return None
+            return None, None
         
         self._log(f"[OCR Buffer] Processing batch of {len(self._buffer)} images")
         
         # Run OCR on each image and collect results with confidence
-        results = []  # List of (text, confidence)
+        # Store (raw_text, cleaned/answer, confidence) tuples
+        results = []
         
         for img in self._buffer:
             text, confidence = self._run_single_ocr(img)
             if text and confidence >= self.confidence_threshold:
                 # Detect type and clean accordingly
                 is_expr = self._is_expression(text)
-                cleaned = self._clean_result(text)
-                if cleaned:
-                    results.append((cleaned, confidence))
-                    type_str = "expr" if is_expr else "text"
-                    self._log(f"[OCR Buffer] Valid result ({type_str}): '{cleaned}' ({confidence:.2f}%)")
+                if is_expr:
+                    # For expressions: question = cleaned expr, answer = calculated
+                    cleaned_expr = self._clean_expression(text)
+                    answer = self.evaluate_expression(text)
+                    if answer:
+                        results.append((cleaned_expr, answer, confidence))
+                        self._log(f"[OCR Buffer] Valid expr: '{cleaned_expr}' = '{answer}' ({confidence:.2f}%)")
+                    else:
+                        self._log(f"[OCR Buffer] Filtered (failed eval): '{text}' ({confidence:.2f}%)")
                 else:
-                    self._log(f"[OCR Buffer] Filtered (empty after clean): '{text}' ({confidence:.2f}%)")
+                    # For text: question = cleaned text, answer = same
+                    cleaned = self._clean_text(text)
+                    if cleaned:
+                        results.append((cleaned, cleaned, confidence))
+                        self._log(f"[OCR Buffer] Valid text: '{cleaned}' ({confidence:.2f}%)")
+                    else:
+                        self._log(f"[OCR Buffer] Filtered (empty after clean): '{text}' ({confidence:.2f}%)")
             elif text:
                 self._log(f"[OCR Buffer] Filtered (low conf): '{text}' ({confidence:.2f}%)")
         
@@ -526,16 +548,23 @@ class OCRBufferManager:
         if not results:
             self._log("[OCR Buffer] No valid results after filtering")
             self._is_processing = False
-            return None
+            return None, None
         
-        # Find mode (most frequent result)
-        texts = [r[0] for r in results]
-        counter = Counter(texts)
-        mode_text, mode_count = counter.most_common(1)[0]
+        # Find mode based on answer (most frequent result)
+        answers = [r[1] for r in results]
+        counter = Counter(answers)
+        mode_answer, mode_count = counter.most_common(1)[0]
         
-        self._log(f"[OCR Buffer] Mode result: '{mode_text}' (count: {mode_count}/{len(results)})")
+        # Find the corresponding question for the mode answer
+        mode_question = None
+        for q, a, _ in results:
+            if a == mode_answer:
+                mode_question = q
+                break
+        
+        self._log(f"[OCR Buffer] Mode result: '{mode_question}' = '{mode_answer}' (count: {mode_count}/{len(results)})")
         self._is_processing = False
-        return mode_text
+        return mode_question, mode_answer
     
     def _run_single_ocr(self, image: np.ndarray) -> tuple:
         """
