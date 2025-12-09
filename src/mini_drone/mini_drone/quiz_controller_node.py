@@ -212,6 +212,7 @@ class QuizControllerNode(Node):
         # ---- ANAFI Tracker ----
         # Tracking 완료 시 콜백을 통해 OCR 대기 상태로 전환
         self._tracking_complete = False
+        self._tracking_started = False  # Tracking 시작 여부 (처음 한 번만 시작)
         self._anafi_tracker = AnafiTracker(
             node=self,
             config=TrackingConfig(
@@ -622,12 +623,18 @@ class QuizControllerNode(Node):
         if self.mini_only_mode:
             self.get_logger().info("Detecting started (MINI-ONLY) - waiting for /quiz/answer...")
         else:
-            # ANAFI auto-tracking 시작
-            self._anafi_tracker.start_tracking()
-            self.get_logger().info(
-                "Detecting started - Auto-tracking ANAFI to center target...\n"
-                "    → Tracking will auto-complete when target is centered."
-            )
+            # ANAFI auto-tracking 시작 (처음 한 번만)
+            if not self._tracking_started:
+                self._anafi_tracker.start_tracking()
+                self._tracking_started = True
+                self.get_logger().info(
+                    "Detecting started - Auto-tracking ANAFI to center target...\n"
+                    "    → Tracking will auto-complete when target is centered."
+                )
+            else:
+                self.get_logger().info(
+                    "Detecting started - Auto-tracking already started (skipping)"
+                )
         self._log_state_change()
 
     def _handle_start_ocr_locked(self):
